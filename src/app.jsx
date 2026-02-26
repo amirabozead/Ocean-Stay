@@ -844,7 +844,15 @@ function loadSupabaseCfg() {
 
     if (url && !url.startsWith("http://") && !url.startsWith("https://")) url = "https://" + url;
 
-    return { enabled: !!(enabled && url && anonKey), url, anonKey, push: raw.push !== false, pull: raw.pull !== false };
+    // When env vars are present, force sync directions on to avoid stale localStorage flags
+    // (old saved Settings could have pull/push disabled and silently block sync on localhost).
+    return {
+      enabled: !!(enabled && url && anonKey),
+      url,
+      anonKey,
+      push: useEnv ? true : raw.push !== false,
+      pull: useEnv ? true : raw.pull !== false,
+    };
   } catch {
     return { enabled: false, url: "", anonKey: "", push: true, pull: true };
   }
@@ -1363,9 +1371,25 @@ useEffect(() => {
 
   const [sbCfg, setSbCfg] = useState(() => {
     const c = storeLoad(SB_LS_CFG);
-    return c
-      ? { enabled: !!c.enabled, url: c.url || "", anon: c.anon || "", push: c.push !== false, pull: c.pull !== false }
-      : { enabled: false, url: "", anon: "", push: true, pull: true };
+    if (c) {
+      return {
+        enabled: !!c.enabled,
+        url: c.url || "",
+        anon: c.anon || c.anonKey || c.key || "",
+        push: c.push !== false,
+        pull: c.pull !== false,
+      };
+    }
+
+    // No saved cloud settings yet: bootstrap from .env/.env.local when available.
+    const envCfg = loadSupabaseCfg();
+    return {
+      enabled: !!envCfg.enabled,
+      url: envCfg.url || "",
+      anon: envCfg.anonKey || "",
+      push: envCfg.push !== false,
+      pull: envCfg.pull !== false,
+    };
   });
 
   const supabaseEnabled = !!(sbCfg?.enabled && sbCfg?.url && sbCfg?.anon);
@@ -1479,31 +1503,146 @@ useEffect(() => {
 
       // Apply Supabase → app: use cloud as source of truth so deletions in Supabase reflect in app on refresh
       if (!cancelled && allowPull) {
-        setStoreItems(itemsCloud);
-        storeSave(LS_STORE_ITEMS, itemsCloud);
-        setStoreMoves(movesCloud);
-        storeSave(LS_STORE_MOVES, movesCloud);
-        setStoreSuppliers(suppliersCloud);
-        storeSave(LS_STORE_SUPPLIERS, suppliersCloud);
-        setExpenses(expensesCloud);
-        storeSave("ocean_expenses_v1", expensesCloud);
-        setDailyRates(dailyRatesCloud);
-        storeSave("oceanstay_daily_rates_v1", dailyRatesCloud);
-        storeSave("oceanstay_daily_rates", dailyRatesCloud);
+        // If cloud is empty but local has data, seed cloud once and keep local values.
+        const localItems = storeItems || [];
+        const localMoves = storeMoves || [];
+        const localSuppliers = storeSuppliers || [];
+        const localExpenses = expenses || [];
+        const localDailyRates = dailyRates || [];
+        const localReservations = reservations || [];
+        const localExtraRevenues = extraRevenues || [];
+
+        let itemsEffective = itemsCloud;
+        let movesEffective = movesCloud;
+        let suppliersEffective = suppliersCloud;
+        let expensesEffective = expensesCloud;
+        let dailyRatesEffective = dailyRatesCloud;
+        let reservationsEffective = reservationsCloud;
+        let extraRevenuesEffective = extraRevenuesCloud;
+
+        if (allowPush) {
+          if (itemsCloud.length === 0 && localItems.length > 0) {
+            await sb.from("ocean_store_items").upsert(
+              localItems.map((it) => ({ id: it.id, data: it })),
+              { onConflict: "id" }
+            );
+            itemsEffective = localItems;
+          }
+          if (movesCloud.length === 0 && localMoves.length > 0) {
+            await sb.from("ocean_store_moves").upsert(
+              localMoves.map((m) => ({ id: m.id, data: m })),
+              { onConflict: "id" }
+            );
+            movesEffective = localMoves;
+          }
+          if (suppliersCloud.length === 0 && localSuppliers.length > 0) {
+            await sb.from("ocean_store_suppliers").upsert(
+              localSuppliers.map((s) => ({ id: s.id, data: s })),
+              { onConflict: "id" }
+            );
+            suppliersEffective = localSuppliers;
+          }
+          // Expenses: normal two-way bootstrap
+          // - if cloud is empty and local has data: seed cloud from local
+          // - if cloud has data: keep cloud as source-of-truth for pull
+          if (expensesCloud.length === 0 && localExpenses.length > 0) {
+            const payloadExpenses = (localExpenses || []).map((x) => ({
+              id: x.id || (crypto?.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
+              expense_date: (x.expense_date || x.date || new Date().toISOString().slice(0, 10)).toString().slice(0, 10),
+              category: x.category || "",
+              vendor: x.vendor || "",
+              description: x.description || "",
+              amount: Number(x.amount || 0),
+              method: x.method || "",
+              ref: x.ref || "",
+              updated_at: new Date().toISOString(),
+            }));
+            if (payloadExpenses.length) {
+              await sb.from("ocean_expenses").upsert(payloadExpenses, { onConflict: "id" });
+              expensesEffective = localExpenses;
+            }
+          }
+          if (dailyRatesCloud.length === 0 && localDailyRates.length > 0) {
+            const payloadDailyRates = (localDailyRates || [])
+              .map((r) => {
+                const room_type = (r.roomType ?? r.room_type ?? "").toString().trim();
+                const fromISO = toISODate(r.from ?? r.date_from ?? r.dateFrom ?? r.date_from);
+                let toISO = toISODate(r.to ?? r.date_to ?? r.dateTo ?? r.date_to) || fromISO;
+                if (fromISO && toISO && toISO < fromISO) toISO = fromISO;
+                return {
+                  room_type,
+                  date_from: fromISO,
+                  date_to: toISO,
+                  nightly_rate: pickNumMaybe(r.nightlyRate, r.nightly_rate, r.rate),
+                  pkg_bb: readPkgMaybe(r, "bb"),
+                  pkg_hb: readPkgMaybe(r, "hb"),
+                  pkg_fb: readPkgMaybe(r, "fb"),
+                };
+              })
+              .filter((x) => x.room_type && x.date_from && x.date_to);
+            if (payloadDailyRates.length) {
+              await upsertDailyRatesSafe(sb, payloadDailyRates);
+              dailyRatesEffective = localDailyRates;
+            }
+          }
+          if (reservationsCloud.length === 0 && localReservations.length > 0) {
+            const resRows = localReservations
+              .filter((r) => r && r.id)
+              .map((r) => ({ id: String(r.id), data: r, updated_at: r.updatedAt || new Date().toISOString() }));
+            if (resRows.length) {
+              await sb.from("reservations").upsert(resRows, { onConflict: "id" });
+              reservationsEffective = localReservations;
+            }
+          }
+          if (extraRevenuesCloud.length === 0 && localExtraRevenues.length > 0) {
+            const todayYMD = new Date().toISOString().slice(0, 10);
+            const extraRows = localExtraRevenues
+              .filter((r) => r && r.id)
+              .map((r) => {
+                const dateStr = (r.date || "").toString().trim().slice(0, 10);
+                const revenueDate = /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : todayYMD;
+                const nowIso = new Date().toISOString();
+                return {
+                  id: String(r.id),
+                  revenue_date: revenueDate,
+                  type: (r.type || "Services").trim() || "Services",
+                  description: (r.description || "").trim(),
+                  amount: Number(r.amount ?? 0),
+                  created_at: nowIso,
+                  updated_at: nowIso,
+                };
+              });
+            if (extraRows.length) {
+              await sb.from("ocean_extra_revenues").upsert(extraRows, { onConflict: "id" });
+              extraRevenuesEffective = localExtraRevenues;
+            }
+          }
+        }
+
+        setStoreItems(itemsEffective);
+        storeSave(LS_STORE_ITEMS, itemsEffective);
+        setStoreMoves(movesEffective);
+        storeSave(LS_STORE_MOVES, movesEffective);
+        setStoreSuppliers(suppliersEffective);
+        storeSave(LS_STORE_SUPPLIERS, suppliersEffective);
+        setExpenses(expensesEffective);
+        storeSave("ocean_expenses_v1", expensesEffective);
+        setDailyRates(dailyRatesEffective);
+        storeSave("oceanstay_daily_rates_v1", dailyRatesEffective);
+        storeSave("oceanstay_daily_rates", dailyRatesEffective);
         
         // SAFETY CHECK: Don't overwrite local reservations with empty cloud data
         // Only sync if cloud has data OR if local is also empty (first time setup)
-        const localReservations = reservations || [];
-        if (reservationsCloud.length > 0 || localReservations.length === 0) {
-          setReservations(reservationsCloud);
-          storeSave("oceanstay_reservations_v1", reservationsCloud);
+        if (reservationsEffective.length > 0 || localReservations.length === 0) {
+          setReservations(reservationsEffective);
+          storeSave("oceanstay_reservations_v1", reservationsEffective);
         } else {
           console.warn("⚠️ Cloud sync skipped reservations: Cloud data is empty but local has", localReservations.length, "reservations. To prevent data loss, local reservations are preserved.");
           // Still sync other data, but preserve local reservations
         }
         
-        setExtraRevenues(extraRevenuesCloud);
-        storeSave("ocean_extra_rev_v1", extraRevenuesCloud);
+        setExtraRevenues(extraRevenuesEffective);
+        storeSave("ocean_extra_rev_v1", extraRevenuesEffective);
         
         // Two-way OOS sync: Supabase is source of truth on load
         const localOOSBefore = storeLoad("ocean_oos_periods_v1", []) || [];
@@ -1935,9 +2074,9 @@ useEffect(() => {
   // Expenses: keep Supabase in sync with local (same pattern as extra revenues)
   useEffect(() => {
     if (!cloudBootstrapped) return;
-    const cfg = lsGet(SB_LS_CFG, null);
-    const anon = (cfg?.anon || cfg?.anonKey || "").trim();
-    if (!cfg?.enabled || !cfg?.url || !anon) return;
+    const cfg = loadSupabaseCfg();
+    const sb = getSupabaseClient();
+    if (!cfg?.enabled || !sb) return;
 
     const localList = Array.isArray(expenses) ? expenses : [];
     const localIds = new Set(localList.filter((e) => e && e.id).map((e) => String(e.id)));
@@ -1964,7 +2103,6 @@ useEffect(() => {
 
     (async () => {
       try {
-        const sb = createClient(cfg.url, anon);
         if (rows.length) {
           const { error: upErr } = await sb.from("ocean_expenses").upsert(rows, { onConflict: "id" });
           if (upErr) {
@@ -1986,6 +2124,62 @@ useEffect(() => {
       }
     })();
   }, [cloudBootstrapped, expenses]);
+
+  // Expenses: explicit Supabase -> local refresh (page open/focus)
+  // This avoids stale local data if bootstrap ran before config settled.
+  useEffect(() => {
+    if (!cloudBootstrapped) return;
+    const cfg = loadSupabaseCfg();
+    const sb = getSupabaseClient();
+    if (!cfg?.enabled || cfg.pull === false || !sb) return;
+
+    const pullExpensesFromCloud = async () => {
+      try {
+        const { data, error } = await sb
+          .from("ocean_expenses")
+          .select("id,expense_date,category,vendor,description,amount,method,ref,updated_at")
+          .limit(10000);
+        if (error) {
+          console.error("ocean_expenses pull error:", error.message, error.details);
+          return;
+        }
+
+        const cloudList = (data || [])
+          .map((r) => {
+            const d = (r.expense_date || "").toString().slice(0, 10) || (r.updated_at || "").toString().slice(0, 10);
+            if (!r.id || !d) return null;
+            return {
+              id: String(r.id),
+              date: d,
+              expense_date: d,
+              category: r.category || "",
+              vendor: r.vendor || "",
+              description: r.description || "",
+              amount: Number(r.amount ?? 0),
+              method: r.method || "",
+              ref: r.ref || "",
+              updatedAt: r.updated_at || null,
+            };
+          })
+          .filter(Boolean);
+
+        setExpenses(cloudList);
+        storeSave("ocean_expenses_v1", cloudList);
+      } catch (e) {
+        console.error("ocean_expenses pull exception:", e);
+      }
+    };
+
+    if (page === "expenses") {
+      pullExpensesFromCloud();
+    }
+
+    const onFocus = () => {
+      if (page === "expenses") pullExpensesFromCloud();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [cloudBootstrapped, page]);
 
   useEffect(() => {
     storeSave("oceanstay_daily_rates_v1", dailyRates);
