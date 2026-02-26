@@ -1159,6 +1159,7 @@ export default function App() {
     return [];
   });
   const prevDailyRatesRef = useRef(null);
+  const expensesSyncRunRef = useRef(0);
 
 const updateDailyRates = (next) => {
   setDailyRates((prev) => {
@@ -2078,6 +2079,9 @@ useEffect(() => {
     const sb = getSupabaseClient();
     if (!cfg?.enabled || !sb) return;
 
+    // Debounce and cancel stale sync runs to avoid re-inserting recently deleted rows.
+    const runId = ++expensesSyncRunRef.current;
+
     const localList = Array.isArray(expenses) ? expenses : [];
     const localIds = new Set(localList.filter((e) => e && e.id).map((e) => String(e.id)));
 
@@ -2101,8 +2105,9 @@ useEffect(() => {
         };
       });
 
-    (async () => {
+    const timer = setTimeout(async () => {
       try {
+        if (runId !== expensesSyncRunRef.current) return;
         if (rows.length) {
           const { error: upErr } = await sb.from("ocean_expenses").upsert(rows, { onConflict: "id" });
           if (upErr) {
@@ -2110,6 +2115,7 @@ useEffect(() => {
             return;
           }
         }
+        if (runId !== expensesSyncRunRef.current) return;
         const { data: existing, error: selErr } = await sb.from("ocean_expenses").select("id");
         if (selErr) {
           console.error("ocean_expenses select error:", selErr.message);
@@ -2122,7 +2128,9 @@ useEffect(() => {
       } catch (e) {
         console.error("ocean_expenses sync failed:", e);
       }
-    })();
+    }, 450);
+
+    return () => clearTimeout(timer);
   }, [cloudBootstrapped, expenses]);
 
   // Expenses: explicit Supabase -> local refresh (page open/focus)
