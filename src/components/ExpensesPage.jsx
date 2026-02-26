@@ -114,7 +114,20 @@ export default function ExpensesPage({ paymentMethods, expenses, setExpenses, su
 
   function remove(id) {
     if(!window.confirm("Delete this expense?")) return;
-    persist(expenses.filter((e) => e.id !== id));
+    const next = expenses.filter((e) => e.id !== id);
+    persist(next);
+
+    // Immediate cloud delete to avoid pull/push race restoring removed rows.
+    if (supabase && supabaseEnabled && id) {
+      (async () => {
+        try {
+          const { error } = await supabase.from("ocean_expenses").delete().eq("id", String(id));
+          if (error) console.error("ocean_expenses immediate delete error:", error.message, error.details);
+        } catch (e) {
+          console.error("ocean_expenses immediate delete exception:", e);
+        }
+      })();
+    }
   }
 
   function upsert(payload) {
@@ -126,11 +139,34 @@ export default function ExpensesPage({ paymentMethods, expenses, setExpenses, su
       updatedAt: now,
     };
 
-    if (editingId) {
-      persist(expenses.map((e) => (e.id === editingId ? clean : e)));
-    } else {
-      persist([{ ...clean, createdAt: now }, ...expenses]);
+    const next = editingId
+      ? expenses.map((e) => (e.id === editingId ? clean : e))
+      : [{ ...clean, createdAt: now }, ...expenses];
+    persist(next);
+
+    // Immediate cloud upsert to keep remote aligned with UI actions.
+    if (supabase && supabaseEnabled) {
+      (async () => {
+        try {
+          const row = {
+            id: String(clean.id),
+            expense_date: String(clean.date || "").slice(0, 10),
+            category: String(clean.category || "Other"),
+            vendor: String(clean.vendor || ""),
+            description: String(clean.description || ""),
+            amount: Number(clean.amount || 0),
+            method: String(clean.method || ""),
+            ref: String(clean.ref || ""),
+            updated_at: new Date().toISOString(),
+          };
+          const { error } = await supabase.from("ocean_expenses").upsert([row], { onConflict: "id" });
+          if (error) console.error("ocean_expenses immediate upsert error:", error.message, error.details);
+        } catch (e) {
+          console.error("ocean_expenses immediate upsert exception:", e);
+        }
+      })();
     }
+
     setOpen(false);
     setEditingId(null);
   }
