@@ -2134,6 +2134,13 @@ useEffect(() => {
     if (!cfg?.enabled || cfg.pull === false || !sb) return;
 
     const pullExpensesFromCloud = async () => {
+      // Prevent focus-pull from immediately undoing a local add/edit/delete action.
+      // ExpensesPage stamps this key on local writes.
+      try {
+        const lastLocalWrite = Number(localStorage.getItem("ocean_expenses_local_write_ts") || 0);
+        if (Number.isFinite(lastLocalWrite) && Date.now() - lastLocalWrite < 8000) return;
+      } catch {}
+
       try {
         const { data, error } = await sb
           .from("ocean_expenses")

@@ -22,8 +22,9 @@ export default function ExpensesPage({ paymentMethods, expenses, setExpenses, su
 
   // --- Logic Same as Before ---
   const persist = (next) => {
-    setExpenses(next); 
+    setExpenses(next);
     try { localStorage.setItem(EXP_LS_EXPENSES, JSON.stringify(next)); } catch {}
+    try { localStorage.setItem("ocean_expenses_local_write_ts", String(Date.now())); } catch {}
   };
 
   const [period, setPeriod] = useState("MTD");
