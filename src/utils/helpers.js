@@ -193,9 +193,29 @@ export const isOOSPhysical = (v) => {
 
 export const normalizePhysicalStatus = (v) => (isOOSPhysical(v) ? "Out of Service" : String(v || "").trim() || "Clean");
 /* ================= SECURITY HELPERS ================= */
+/** app_users.allowed_pages from Postgres may be an array, or a JSON string if stored oddly */
+export const normalizeAllowedPages = (value) => {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (value == null || value === "") return ["dashboard"];
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (!s) return ["dashboard"];
+    if (s.startsWith("[")) {
+      try {
+        const p = JSON.parse(s);
+        return Array.isArray(p) ? p.map(String).filter(Boolean) : ["dashboard"];
+      } catch {
+        return ["dashboard"];
+      }
+    }
+    return [s];
+  }
+  return ["dashboard"];
+};
+
 export const secCanAccessPage = (user, pageKey) => {
   if (!user) return false;
-  const allow = Array.isArray(user.allowedPages) ? user.allowedPages : [];
+  const allow = normalizeAllowedPages(user.allowedPages);
   return allow.includes(pageKey);
 };
 

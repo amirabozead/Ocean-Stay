@@ -42,7 +42,8 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    base: "./",
+    // Root-relative assets so Vercel SPA rewrites (e.g. /any/path → index.html) still load /assets/* correctly.
+    base: "/",
     server: { port: 5137 },
     define,
   };

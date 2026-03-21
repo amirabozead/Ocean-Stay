@@ -227,6 +227,7 @@ import {
   lsGet,
   secSeedUsers,
   normalizePhysicalStatus,
+  normalizeAllowedPages,
   computeSplitPricingSnapshot,
   calcNights,
   roundTo2,
@@ -371,7 +372,7 @@ function SupabaseLoginInline({ supabase, onLogin, onOpenCloudSettings }) {
         email: profile.email || authUser.email,
         full_name: profile.full_name || "",
         role: profile.role || "viewer",
-        allowedPages: profile.allowed_pages || ["dashboard"],
+        allowedPages: normalizeAllowedPages(profile.allowed_pages ?? profile.allowedPages),
       });
     } catch (e) {
       const raw = String(e?.message || e);
@@ -2687,14 +2688,16 @@ useEffect(() => {
       {/* MAIN CONTENT AREA */}
       <main className="main">
         {page === "dashboard" && (
-          <DashboardPage
-            reservations={toArray(reservations)}
-            rooms={BASE_ROOMS}
-            expenses={expenses}
-            extraRevenues={extraRevenues}
-            dailyRates={dailyRates}
-            user={currentUser}
-          />
+          <SafePage>
+            <DashboardPage
+              reservations={toArray(reservations)}
+              rooms={BASE_ROOMS}
+              expenses={expenses}
+              extraRevenues={extraRevenues}
+              dailyRates={dailyRates}
+              user={currentUser}
+            />
+          </SafePage>
         )}
 
         {page === "reservations" && (
