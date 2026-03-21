@@ -13,7 +13,7 @@ import {
 } from "chart.js";
 import { Line, Doughnut, Bar, Pie } from "react-chartjs-2";
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
-import { storeLoad } from "../utils/helpers";
+import { storeLoad, computeSplitPricingSnapshot, roundTo2 } from "../utils/helpers";
 import { getOOSRoomsCountOnDate } from "../utils/oosHelpers";
 
 ChartJS.register(
@@ -148,7 +148,7 @@ function computeKpiForDateRange(reservationsArr, roomsArr, expensesArr, extraRev
 
   const checkedInRes = reservationsArr.filter(r => {
     const status = (r.status || "").toLowerCase();
-    const isCheckedIn = status === "checked-in" || status === "checked in" || status === "checked-out" || status === "checked out" || status === "in house";
+    const isCheckedIn = status === "checked-in" || status === "checked in" || status === "c-in" || status === "checked-out" || status === "checked out" || status === "in house";
     if (!isCheckedIn) return false;
     const ci = r?.stay?.checkIn;
     const co = r?.stay?.checkOut;
@@ -329,8 +329,16 @@ function getTrendSegments(period, customStart, customEnd, selectedMonth) {
 }
 
 // --- المكون الرئيسي ---
-export default function DashboardPage({ reservations = [], rooms = [], expenses = [], extraRevenues = [] }) {
+export default function DashboardPage({ reservations = [], rooms = [], expenses = [], extraRevenues = [], dailyRates = [] }) {
   // Ensure we always work with arrays (App may pass objects/maps during cloud sync)
+  const dailyRatesArr = (() => {
+    const v = dailyRates;
+    if (Array.isArray(v)) return v;
+    if (!v) return [];
+    if (v instanceof Map) return Array.from(v.values());
+    if (typeof v === "object") return Object.values(v);
+    return [];
+  })();
   const reservationsArr = (() => {
     const v = reservations;
     if (Array.isArray(v)) return v;
@@ -431,8 +439,8 @@ export default function DashboardPage({ reservations = [], rooms = [], expenses 
     // Include reservations that checked in before or during the period and are still checked in
     const checkedInRes = reservationsArr.filter(r => {
       const status = (r.status || "").toLowerCase();
-      const isCheckedIn = status === "checked-in" || status === "checked in" || 
-                         status === "checked-out" || status === "checked out" || 
+const isCheckedIn = status === "checked-in" || status === "checked in" || status === "c-in" ||
+                         status === "checked-out" || status === "checked out" ||
                          status === "in house";
       if (!isCheckedIn) return false;
       
@@ -461,6 +469,11 @@ export default function DashboardPage({ reservations = [], rooms = [], expenses 
     let totalTax = 0;
     let totalServiceCharge = 0;
     let totalCityTax = 0;
+    const settings = storeLoad("ocean_settings_v1", null) || {};
+    const taxRate = Number(settings?.taxRate ?? 17);
+    const serviceCharge = Number(settings?.serviceCharge ?? 10);
+    const cityTaxFixed = Number(settings?.cityTax ?? 0);
+
     currentRes.forEach((r) => {
       const ci = String(r?.stay?.checkIn || "").slice(0, 10);
       const co = String(r?.stay?.checkOut || "").slice(0, 10);
@@ -472,6 +485,28 @@ export default function DashboardPage({ reservations = [], rooms = [], expenses 
       if (!Number.isFinite(totalRevenue) || totalRevenue < 0) {
         const nightly = Array.isArray(p.nightly) ? p.nightly : [];
         totalRevenue = nightly.length ? nightly.reduce((a, x) => a + Number(x?.rate ?? x?.baseRate ?? 0), 0) : Number(p.total ?? 0);
+      }
+      // When stored pricing is missing/zero, compute from full stay (beginning of reservation) so dashboard revenue is correct
+      let taxAmount = Number(p.taxAmount ?? p.tax ?? 0);
+      let serviceAmount = Number(p.serviceAmount ?? p.serviceCharge ?? p.service ?? 0);
+      let cityTaxAmount = Number(p.cityTaxAmount ?? p.cityTax ?? 0);
+      if ((!Number.isFinite(totalRevenue) || totalRevenue <= 0) && dailyRatesArr.length > 0) {
+        const snap = computeSplitPricingSnapshot({
+          roomType: r?.room?.roomType,
+          checkIn: r?.stay?.checkIn,
+          checkOut: r?.stay?.checkOut,
+          dailyRates: dailyRatesArr,
+          taxRate,
+          serviceCharge,
+          mealPlan: r?.mealPlan ?? "BO",
+          pax: r?.pax ?? 1,
+        });
+        if (snap.ok) {
+          totalRevenue = snap.subtotal;
+          taxAmount = snap.taxAmount;
+          serviceAmount = snap.serviceAmount;
+          cityTaxAmount = roundTo2((r?.pax ?? 1) * cityTaxFixed * totalNights);
+        }
       }
       if (!Number.isFinite(totalRevenue) || totalRevenue < 0) return;
       const ciD = new Date(ci + "T12:00:00");
@@ -487,9 +522,9 @@ export default function DashboardPage({ reservations = [], rooms = [], expenses 
         const ratio = countNights / totalNights;
         roomRev += totalRevenue * ratio;
         roomNightsSold += countNights;
-        totalTax += Number(p.taxAmount ?? p.tax ?? 0) * ratio;
-        totalServiceCharge += Number(p.serviceAmount ?? p.serviceCharge ?? p.service ?? 0) * ratio;
-        totalCityTax += Number(p.cityTaxAmount ?? p.cityTax ?? 0) * ratio;
+        totalTax += taxAmount * ratio;
+        totalServiceCharge += serviceAmount * ratio;
+        totalCityTax += cityTaxAmount * ratio;
       }
     });
     roomRev = Math.round(roomRev * 100) / 100;
@@ -547,7 +582,7 @@ export default function DashboardPage({ reservations = [], rooms = [], expenses 
         occ, adr, revpar, roomNightsSold,
         topNationalitiesData
     };
-  }, [reservations, rooms, expenses, extraRevenuesArr, period, customStart, customEnd, selectedMonth]);
+  }, [reservations, rooms, expenses, extraRevenuesArr, period, customStart, customEnd, selectedMonth, dailyRatesArr]);
 
   const trendSegments = useMemo(() => getTrendSegments(period, customStart, customEnd, selectedMonth), [period, customStart, customEnd, selectedMonth]);
 

@@ -299,7 +299,6 @@ function SupabaseLoginInline({ supabase, onLogin, onOpenCloudSettings }) {
   const [err, setErr] = useState("");
 
   const settings = storeLoad("ocean_settings_v1") || {};
-  const hotelName = settings.hotelName || "Ocean Stay";
   const logoUrl = settings.logoUrl || "/logo.png";
   const BG_IMAGE = "/maldives.jpg";
 
@@ -375,7 +374,21 @@ function SupabaseLoginInline({ supabase, onLogin, onOpenCloudSettings }) {
         allowedPages: profile.allowed_pages || ["dashboard"],
       });
     } catch (e) {
-      setErr(String(e?.message || e));
+      const raw = String(e?.message || e);
+      const name = e?.name || "";
+      const looksLikeNetwork =
+        /failed to fetch|networkerror|load failed|network request failed/i.test(raw) ||
+        name === "AuthRetryableFetchError" ||
+        (typeof TypeError !== "undefined" &&
+          e instanceof TypeError &&
+          /fetch|network|load failed/i.test(raw));
+      if (looksLikeNetwork) {
+        setErr(
+          "Cannot reach Supabase. Check your internet and Project URL in Settings. If you use a local env file, name it .env.local (Vite ignores env.local unless you keep both). Run the app with npm run dev — not by opening index.html as a file."
+        );
+      } else {
+        setErr(raw);
+      }
     } finally {
       setBusy(false);
     }
@@ -757,7 +770,7 @@ function SupabaseLoginInline({ supabase, onLogin, onOpenCloudSettings }) {
               className="brand-logo"
               onError={(e) => (e.target.style.display = "none")}
             />
-            <h1 className="brand-name">{hotelName}</h1>
+            <h1 className="brand-name">Ocean Stay</h1>
             <p className="brand-tagline">Maldives</p>
             <p className="brand-footer">Cloud Authentication · Secure Access</p>
           </div>
@@ -1878,19 +1891,31 @@ useEffect(() => {
     setInvoiceReservation(r);
   };
 
+  const normalizeReservationStatus = (s) => {
+    const t = String(s ?? "").trim().toLowerCase();
+    if (t === "c-in" || /checked?\s*in|check\s*in/.test(t)) return "Checked-in";
+    if (/checked?\s*out|check\s*out/.test(t)) return "Checked-out";
+    if (/cancel/i.test(t)) return "Cancelled";
+    if (/out\s*of\s*service|oos/i.test(t)) return "Out of Service";
+    if (t === "booked") return "Booked";
+    return s || "Booked";
+  };
+
   const handleSaveReservation = (data) => {
+    const normalizedStatus = normalizeReservationStatus(data?.status);
+    const dataWithStatus = { ...data, status: normalizedStatus };
     let next;
     if (editingIndex !== null) {
       next = [...reservations];
       next[editingIndex] = {
         ...next[editingIndex],
-        ...data,
+        ...dataWithStatus,
         updatedAt: new Date().toISOString(),
       };
     } else {
       next = [
         ...reservations,
-        { ...data, id: uid("res"), createdAt: new Date().toISOString() },
+        { ...dataWithStatus, id: uid("res"), createdAt: new Date().toISOString() },
       ];
     }
     const savedRes = editingIndex !== null ? next[editingIndex] : next[next.length - 1];
@@ -2293,10 +2318,17 @@ useEffect(() => {
     const serviceCharge = Number(s?.serviceCharge ?? 10);
     const cityTaxFixed = Number(s?.cityTax ?? 0);
 
+    const isBookedOrCheckedIn = (status) => {
+      const t = String(status ?? "").trim().toLowerCase();
+      if (t === "booked") return true;
+      if (t === "checked-in" || t === "checked in" || t === "c-in" || /check\s*in|checked\s*in/.test(t)) return true;
+      return false;
+    };
+
     setReservations((prev) => {
       let changed = false;
       const next = prev.map((r) => {
-        if (!r || (r.status !== "Booked" && r.status !== "Checked-in")) return r;
+        if (!r || !isBookedOrCheckedIn(r.status)) return r;
 
         const snap = computeSplitPricingSnapshot({
           roomType: r.room?.roomType,
@@ -2660,6 +2692,7 @@ useEffect(() => {
             rooms={BASE_ROOMS}
             expenses={expenses}
             extraRevenues={extraRevenues}
+            dailyRates={dailyRates}
             user={currentUser}
           />
         )}

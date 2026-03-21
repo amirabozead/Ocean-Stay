@@ -95,7 +95,7 @@ export default function DailyRatePage({ reservations = [] }) {
     // Room revenue = room only (roomSubtotal/roomBase). Only count checked-in/checked-out (same as Reports).
     const isCountedStatus = (s) => {
       const t = (s || "").toLowerCase();
-      return t === "checked-in" || t === "checked in" || t === "checked-out" || t === "checked out" || t === "in house";
+      return t === "checked-in" || t === "checked in" || t === "c-in" || t === "checked-out" || t === "checked out" || t === "in house";
     };
     safeReservations.forEach((r) => {
       const status = (r.status || "").toLowerCase();
@@ -165,7 +165,7 @@ export default function DailyRatePage({ reservations = [] }) {
     periodToExclusive.setDate(periodToExclusive.getDate() + 1);
     const isCountedStatus = (s) => {
       const t = (s || "").toLowerCase();
-      return t === "checked-in" || t === "checked in" || t === "checked-out" || t === "checked out" || t === "in house";
+      return t === "checked-in" || t === "checked in" || t === "c-in" || t === "checked-out" || t === "checked out" || t === "in house";
     };
 
     safeReservations.forEach((r) => {

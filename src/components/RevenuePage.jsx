@@ -275,8 +275,8 @@ export default function RevenuePage({ data = [], reservations = [], onUpdate }) 
 
       const status = (r.status || "").toLowerCase();
       // Only count revenue for reservations that have checked in (not Booked)
-      const isCheckedIn = status === "checked-in" || status === "checked in" || 
-                         status === "checked-out" || status === "checked out" || 
+const isCheckedIn = status === "checked-in" || status === "checked in" || status === "c-in" ||
+                         status === "checked-out" || status === "checked out" ||
                          status === "in house";
       
       if (!isCheckedIn) return; // Skip Booked reservations

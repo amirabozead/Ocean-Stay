@@ -437,6 +437,8 @@ export default function ReservationsPage({
     let soldRoomNights = 0;
     let futureRoomNights = 0;
     let futureResCount = 0;
+    let futureRoomRevenue = 0;
+    let futureTotalRevenue = 0;
 
     for (const r of safe) {
       if (!statusCountsForSales(r?.status)) continue;
@@ -461,8 +463,12 @@ export default function ReservationsPage({
       }
 
       if (ciYMD > today) {
+        const roomRevenue = calcRoomRevenue(r);
+        const fnbRevenue = calcFnbRevenue(r);
         futureResCount += 1;
         futureRoomNights += calcNightsHelper(ci, co);
+        futureRoomRevenue += roomRevenue;
+        futureTotalRevenue += roomRevenue + fnbRevenue;
       }
     }
 
@@ -473,6 +479,7 @@ export default function ReservationsPage({
     const capacityNightsSafe = Math.max(0, totalCapacityNights);
     const availableRoomNights = Math.max(0, capacityNightsSafe - soldRoomNights);
     const occPctRange = capacityNightsSafe > 0 ? (soldRoomNights / capacityNightsSafe) * 100 : 0;
+    const futureAdr = futureRoomNights > 0 ? futureRoomRevenue / futureRoomNights : 0;
 
     return {
       totalRooms,
@@ -488,6 +495,8 @@ export default function ReservationsPage({
       occPctRange,
       futureRoomNights,
       futureResCount,
+      futureTotalRevenue,
+      futureAdr,
     };
   }, [reservations, kpiMode]);
 
@@ -517,7 +526,7 @@ export default function ReservationsPage({
     },
     statsBar: {
       display: "grid",
-      gridTemplateColumns: "repeat(4, 1fr)",
+      gridTemplateColumns: "repeat(6, 1fr)",
       gap: "18px",
       marginBottom: "20px",
     },
@@ -782,6 +791,36 @@ export default function ReservationsPage({
           </div>
           <div style={{ ...headerStyles.pill("#fffbeb"), color: "#f59e0b" }}>
             <FaLayerGroup size={20} />
+          </div>
+        </div>
+
+        <div style={headerStyles.statCard("#2563eb")}>
+          <div>
+            <span style={headerStyles.statLabel}>Future Total Revenue</span>
+            <span style={{ ...headerStyles.statValue, color: "#1d4ed8", fontSize: "20px" }}>
+              {formatMoney(headerKpis.futureTotalRevenue)}
+            </span>
+            <div style={{ marginTop: 4, fontSize: 12, color: "#64748b", fontWeight: 700 }}>
+              Future bookings only
+            </div>
+          </div>
+          <div style={{ ...headerStyles.pill("#eff6ff"), color: "#2563eb" }}>
+            <FaFileInvoiceDollar size={20} />
+          </div>
+        </div>
+
+        <div style={headerStyles.statCard("#9333ea")}>
+          <div>
+            <span style={headerStyles.statLabel}>Future ADR</span>
+            <span style={{ ...headerStyles.statValue, color: "#7e22ce" }}>
+              {formatMoney(Math.round(headerKpis.futureAdr))}
+            </span>
+            <div style={{ marginTop: 4, fontSize: 12, color: "#64748b", fontWeight: 700 }}>
+              Room revenue / room nights
+            </div>
+          </div>
+          <div style={{ ...headerStyles.pill("#f5f3ff"), color: "#9333ea" }}>
+            <FaTag size={20} />
           </div>
         </div>
       </div>

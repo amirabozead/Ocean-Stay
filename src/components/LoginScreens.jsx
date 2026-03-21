@@ -625,7 +625,6 @@ export function OldStyleSecurityLoginScreen({ users, onLogin, onOpenCloudSetting
   const [showPin, setShowPin] = useState(false);
 
   const settings = storeLoad("ocean_settings_v1") || {};
-  const hotelName = settings.hotelName || "Ocean Stay";
   const logoUrl = settings.logoUrl || "/logo.png";
 
   const tryLogin = () => {
@@ -726,7 +725,6 @@ export function SecurityLoginScreen({ users, onLogin, onOpenCloudSettings }) {
   const [showPin, setShowPin] = useState(false);
 
   const settings = storeLoad("ocean_settings_v1") || {};
-  const hotelName = settings.hotelName || "Ocean Stay";
   const logoUrl = settings.logoUrl || "/logo.png";
 
   const tryLogin = () => {
@@ -856,7 +854,6 @@ export function PreAuthCloudSyncScreen({ sbCfg, sbSaveCfg, onBack }) {
   const [enabled, setEnabled] = useState(!!sbCfg?.enabled);
 
   const settings = storeLoad("ocean_settings_v1") || {};
-  const hotelName = settings.hotelName || "Ocean Stay";
   const logoUrl = settings.logoUrl || "/logo.png";
 
   const doSave = () => { 
@@ -980,7 +977,6 @@ export function PreAuthCloudSyncScreen({ sbCfg, sbSaveCfg, onBack }) {
 
 export function SupabaseLoginScreen({ supabase, onOpenCloudSettings }) {
   const settings = storeLoad("ocean_settings_v1") || {};
-  const hotelName = settings.hotelName || "Ocean Stay";
   const logoUrl = settings.logoUrl || "/logo.png";
 
   return (

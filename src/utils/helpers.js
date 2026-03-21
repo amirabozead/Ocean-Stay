@@ -263,7 +263,22 @@ export function computeSplitPricingSnapshot({
     });
   }
 
-  if (missingDates.length > 0) {
+  // So revenue is always from the beginning of the reservation: fill missing nights using the
+  // first available rate for this room (nearest rate in the stay range) instead of failing.
+  if (missingDates.length > 0 && calculatedNightly.length > 0) {
+    const fallback = calculatedNightly[0];
+    const totalPax = Math.max(1, Number(pax || 1));
+    missingDates.forEach((nightStr) => {
+      calculatedNightly.push({
+        date: nightStr,
+        rate: fallback.rate,
+        baseRate: fallback.baseRate,
+        packageAddon: fallback.packageAddon,
+        mealPlan: fallback.mealPlan || String(mealPlan || "BO").toUpperCase()
+      });
+    });
+    calculatedNightly.sort((a, b) => a.date.localeCompare(b.date));
+  } else if (missingDates.length > 0 && calculatedNightly.length === 0) {
     return { ok: false, missing: missingDates, nightly: [], breakdown: [], subtotal: 0, total: 0 };
   }
 

@@ -43,7 +43,13 @@ export default function InvoiceModal({ reservation, onClose }) {
   const baseSubtotal = roundTo2(Number(p.subtotal ?? (roomSubtotal + packageSubtotal)));
   const taxAmount = Number(isClosed ? (p.taxAmount || 0) : (p.taxAmount ?? roundTo2(baseSubtotal * (taxRate / 100))));
   const serviceAmount = Number(isClosed ? (p.serviceAmount || 0) : (p.serviceAmount ?? roundTo2(baseSubtotal * (serviceCharge / 100))));
-  const cityTaxAmount = Number(isClosed ? (p.cityTaxAmount || 0) : (p.cityTaxAmount ?? roundTo2(pax * cityTaxFixed * nights)));
+  const computedCityTax = roundTo2(pax * cityTaxFixed * nights);
+  const cityTaxAmountStored = Number(
+    isClosed
+      ? (p.cityTaxAmount ?? p.cityTax ?? 0)
+      : (p.cityTaxAmount ?? p.cityTax ?? computedCityTax)
+  );
+  const cityTaxAmount = cityTaxAmountStored > 0 ? cityTaxAmountStored : (cityTaxFixed > 0 ? computedCityTax : 0);
   const invoiceTotal = Number(isClosed ? (p.total || 0) : (p.total ?? roundTo2(baseSubtotal + taxAmount + serviceAmount + cityTaxAmount)));
 
   const handlePrint = () => {
@@ -232,12 +238,10 @@ export default function InvoiceModal({ reservation, onClose }) {
                     <td>GST ({taxRate}%)</td>
                     <td className="text-right">{money(taxAmount)}</td>
                   </tr>
-                  {cityTaxAmount > 0 && (
-                    <tr>
-                      <td>Green Tax (City Tax)</td>
-                      <td className="text-right">{money(cityTaxAmount)}</td>
-                    </tr>
-                  )}
+                  <tr>
+                    <td>Green Tax (City Tax)</td>
+                    <td className="text-right">{money(cityTaxAmount)}</td>
+                  </tr>
                 </tbody>
               </table>
             </div>

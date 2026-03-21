@@ -200,8 +200,8 @@ export default function ReportsPage({ reservations, expenses, extraRevenues, tot
       const stayNights = Math.max(1, calcNights(ci, co) || 0);
       
       // Only count revenue for reservations that have checked in (not Booked or Cancelled)
-      const isCheckedIn = status === "checked-in" || status === "checked in" || 
-                         status === "checked-out" || status === "checked out" || 
+const isCheckedIn = status === "checked-in" || status === "checked in" || status === "c-in" ||
+                         status === "checked-out" || status === "checked out" ||
                          status === "in house";
       
       // Skip if not checked in

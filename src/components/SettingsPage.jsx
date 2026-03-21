@@ -303,12 +303,15 @@ export default function SettingsPage({
                 />
               </div>
               <div style={styles.inputGroup}>
-                <label style={styles.label}>City Tax</label>
+                <label style={styles.label}>Green Tax (City Tax) — per person per night</label>
                 <input 
                   type="number"
                   style={styles.input} 
-                  value={settings.cityTax} 
-                  onChange={(e) => setSettings({ ...settings, cityTax: Number(e.target.value) })}
+                  min="0"
+                  step="0.01"
+                  placeholder="0"
+                  value={settings.cityTax ?? ""}
+                  onChange={(e) => setSettings({ ...settings, cityTax: e.target.value === "" ? 0 : Number(e.target.value) })}
                   onFocus={handleFocus} onBlur={handleBlur}
                 />
               </div>

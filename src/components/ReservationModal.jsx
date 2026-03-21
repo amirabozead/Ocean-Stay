@@ -641,7 +641,7 @@ export default function ReservationModal({
                         <div className="p-item"><span>Meal Plan ({mealPlan === "BO" ? "Bed Only" : mealPlan}) Add-on</span> <b>{money(pricing.mealBase)}</b></div>
                         <div className="p-item"><span>Service Charge ({serviceChargeRate}%)</span> <b>{money(pricing.serviceAmount)}</b></div>
                         <div className="p-item"><span>GST ({taxRate}%)</span> <b>{money(pricing.taxAmount)}</b></div>
-                        {cityTaxFixed > 0 && <div className="p-item"><span>Green Tax</span> <b>{money(pricing.cityTaxAmount)}</b></div>}
+                        <div className="p-item"><span>Green Tax (City Tax)</span> <b>{money(pricing.cityTaxAmount)}</b></div>
                         
                         <div className="p-total">
                           <span style={{fontWeight: 700}}>Grand Total</span>
