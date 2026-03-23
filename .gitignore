@@ -4,6 +4,8 @@ build
 .env
 .env.local
 .env.*.local
+# Common mistake name (not loaded by Vite by default unless merged in vite.config)
+env.local
 .DS_Store
 .vercel
 *.log
