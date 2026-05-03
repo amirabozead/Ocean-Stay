@@ -16,6 +16,8 @@ export const FILTER_TABS = ["All", ...STATUS_LIST];
 export const BOOKING_CHANNELS = ["Booking.com", "Airbnb", "Agoda", "Direct booking"];
 /** Payment methods for reservations */
 export const PAYMENT_METHODS = ["Cash", "Credit Card"];
+/** Settlement / folio payment status */
+export const PAYMENT_STATUSES = ["Paid", "Not paid", "Partial Payment", "City Ledger"];
 export const ROOM_TYPES = ["Standard Double Room"];
 
 // Store Keys
@@ -53,10 +55,17 @@ export const APP_PAGES = [
   { key: "settings", label: "Settings" },
 ];
 
+/** All app areas except Rate Analysis, Reports, and Settings (front desk / reception). */
+export const ROLE_DEFAULT_PAGES_FRONT_OFFICE = APP_PAGES.map((p) => p.key).filter(
+  (key) => !["dailyRate", "reports", "settings"].includes(key)
+);
+
 export const ROLE_DEFAULT_PAGES = {
   admin: APP_PAGES.map((p) => p.key),
   manager: ["dashboard", "reservations", "rooms", "dailyRate", "store", "expenses", "reports", "settings"],
-  frontoffice: ["dashboard", "reservations", "rooms", "dailyRate"],
+  frontoffice: ROLE_DEFAULT_PAGES_FRONT_OFFICE,
+  /** Same as `frontoffice`; used by Supabase Security role dropdown. */
+  front_office: ROLE_DEFAULT_PAGES_FRONT_OFFICE,
   accountant: ["dashboard", "expenses", "reports"],
   store: ["dashboard", "store"],
   viewer: ["dashboard", "reports"],

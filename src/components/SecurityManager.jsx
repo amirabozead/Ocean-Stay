@@ -29,7 +29,9 @@ export default function SecurityManager({
 
 // ================= 1. LOCAL SECURITY =================
 function LocalSecurityManager({ users, setUsers, currentUser, onLogout }) {
-  const isAdmin = (currentUser?.username || "") === "admin";
+  const isAdmin =
+    String(currentUser?.username || "").toLowerCase() === "admin" ||
+    String(currentUser?.role || "").toLowerCase() === "admin";
   const [selectedId, setSelectedId] = useState(users?.[0]?.id || "");
   
   useEffect(() => { 
@@ -52,7 +54,9 @@ function LocalSecurityManager({ users, setUsers, currentUser, onLogout }) {
   const deleteUser = (id) => { 
     if ((users || []).length <= 1) return; 
     const u = (users || []).find((x) => x.id === id); 
-    if (!u || u.username === "admin") return alert("Cannot delete admin."); 
+    if (!u || u.username === "admin" || String(u.role || "").toLowerCase() === "admin") {
+      return alert("Cannot delete admin.");
+    } 
     setUsers((prev) => prev.filter((x) => x.id !== id)); 
   };
   
@@ -75,8 +79,8 @@ function LocalSecurityManager({ users, setUsers, currentUser, onLogout }) {
             <div className="securityUsersHeader"><div style={{ fontWeight: 950 }}>Users</div><button className="btn btn--mini" onClick={addUser}><FaPlus /> Add</button></div>
             {(users || []).map((u) => (
               <div key={u.id} className={`securityUserRow ${u.id === selectedId ? "active" : ""}`} onClick={() => setSelectedId(u.id)}>
-                <div style={{ display: "grid", gap: 2 }}><div style={{ fontWeight: 950 }}>{u.username}</div><div style={{ fontSize: 12, opacity: 0.7 }}>{(u.allowedPages || []).length} pages {u.username === "admin" && <span className="pill pill--amber">Admin</span>}</div></div>
-                {u.username !== "admin" && <button className="btn btn--mini btn--danger" onClick={(e) => { e.stopPropagation(); deleteUser(u.id); }}>Delete</button>}
+                <div style={{ display: "grid", gap: 2 }}><div style={{ fontWeight: 950 }}>{u.username}</div><div style={{ fontSize: 12, opacity: 0.7 }}>{(u.allowedPages || []).length} pages {(u.username === "admin" || String(u.role || "").toLowerCase() === "admin") && <span className="pill pill--amber">Admin</span>}</div></div>
+                {u.username !== "admin" && String(u.role || "").toLowerCase() !== "admin" && <button className="btn btn--mini btn--danger" onClick={(e) => { e.stopPropagation(); deleteUser(u.id); }}>Delete</button>}
               </div>
             ))}
           </div>
@@ -105,7 +109,7 @@ function LocalSecurityManager({ users, setUsers, currentUser, onLogout }) {
 
 // ================= 2. SUPABASE SECURITY =================
 function SupabaseSecurityManager({ supabase, currentUser }) {
-  const isAdmin = String(currentUser?.role || "") === "admin";
+  const isAdmin = String(currentUser?.role || "").toLowerCase() === "admin";
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [selectedId, setSelectedId] = useState("");
@@ -146,9 +150,17 @@ function SupabaseSecurityManager({ supabase, currentUser }) {
         <div className="securityGrid">
           <div className="securityUsersList">
             <div className="securityUsersHeader"><div style={{ fontWeight: 950 }}>Users</div><button className="btn btn--mini" onClick={load} disabled={loading}>Refresh</button></div>
+            {!loading && rows.length === 0 && (
+              <div style={{ padding: "10px 12px", fontSize: 13, opacity: 0.85, lineHeight: 1.45 }}>
+                This list mirrors <strong>public.app_users</strong>, keyed to Supabase Auth. Local PIN-only users never appear here.
+                Add an account under Dashboard → Authentication → Users, sign in once in the app, or run{" "}
+                <code style={{ fontSize: 12 }}>npm run supabase:create-user</code>{" "}
+                with <code style={{ fontSize: 12 }}>SUPABASE_SERVICE_ROLE_KEY</code> (see <code style={{ fontSize: 12 }}>scripts/create-app-user.mjs</code>).
+              </div>
+            )}
             {rows.map((u) => (
               <div key={u.id} className={`securityUserRow ${u.id === selectedId ? "active" : ""}`} onClick={() => setSelectedId(u.id)}>
-                <div style={{ display: "grid", gap: 2 }}><div style={{ fontWeight: 950 }}>{u.full_name || u.email}</div><div style={{ fontSize: 12, opacity: 0.7 }}>{(u.allowed_pages || []).length} pages {u.role === "admin" && <span className="pill pill--amber">Admin</span>}</div></div>
+                <div style={{ display: "grid", gap: 2 }}><div style={{ fontWeight: 950 }}>{u.full_name || u.email}</div><div style={{ fontSize: 12, opacity: 0.7 }}>{(u.allowed_pages || []).length} pages {String(u.role || "").toLowerCase() === "admin" && <span className="pill pill--amber">Admin</span>}</div></div>
               </div>
             ))}
           </div>

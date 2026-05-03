@@ -7,14 +7,20 @@ import {
 } from "react-icons/fa";
 
 import {
-  storeMoney, uid, expStartOfMonthStr, expTodayStr, expStartOfYearStr,
-  expInInclusiveRange, roundTo2
+  storeMoney,
+  uid,
+  expStartOfMonthStr,
+  expTodayStr,
+  expStartOfYearStr,
+  expInInclusiveRange,
+  roundTo2,
+  secFoAlertOperationalReadOnly,
 } from "../utils/helpers";
 import { EXP_LS_EXPENSES, EXP_DEFAULT_CATEGORIES } from "../data/constants";
 
 const HOTEL_LOGO = "/logo.png"; 
 
-export default function ExpensesPage({ paymentMethods, expenses, setExpenses, supabase, supabaseEnabled }) {
+export default function ExpensesPage({ paymentMethods, expenses, setExpenses, supabase, supabaseEnabled, frontOfficeOperationalLock = false }) {
   
   // --- States for Toggles ---
   const [showStats, setShowStats] = useState(true); 
@@ -114,6 +120,10 @@ export default function ExpensesPage({ paymentMethods, expenses, setExpenses, su
   const editing = useMemo(() => (expenses || []).find((x) => x.id === editingId) || null, [expenses, editingId]);
 
   function remove(id) {
+    if (frontOfficeOperationalLock) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     if(!window.confirm("Delete this expense?")) return;
     const next = expenses.filter((e) => e.id !== id);
     persist(next);
@@ -132,6 +142,10 @@ export default function ExpensesPage({ paymentMethods, expenses, setExpenses, su
   }
 
   function upsert(payload) {
+    if (frontOfficeOperationalLock && editingId) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     const now = Date.now();
     const clean = {
       ...payload,
@@ -504,7 +518,18 @@ headerCard: {
                     <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{e.ref || "—"}</td>
                     <td>
                       <div className="actions-cell">
-                        <button className="action-btn edit" onClick={() => { setEditingId(e.id); setOpen(true); }} title="Edit">
+                        <button
+                          className="action-btn edit"
+                          onClick={() => {
+                            if (frontOfficeOperationalLock) {
+                              secFoAlertOperationalReadOnly();
+                              return;
+                            }
+                            setEditingId(e.id);
+                            setOpen(true);
+                          }}
+                          title="Edit"
+                        >
                           <FaEdit />
                         </button>
                         <button className="action-btn del" onClick={() => remove(e.id)} title="Delete">

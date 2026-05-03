@@ -210,6 +210,7 @@ import RoomDetailsModal from "./components/RoomDetailsModal";
 
 // 4. Helpers & Constants
 import {
+  APP_PAGES,
   BASE_ROOMS,
   PAYMENT_METHODS,
   LS_STORE_ITEMS,
@@ -218,6 +219,7 @@ import {
   SEC_LS_USERS,
   SEC_LS_SESSION,
   SB_LS_CFG,
+  ROLE_DEFAULT_PAGES,
 } from "./data/constants";
 
 import {
@@ -226,11 +228,16 @@ import {
   storeSave,
   lsGet,
   secSeedUsers,
+  secHossamUser,
   normalizePhysicalStatus,
   normalizeAllowedPages,
   computeSplitPricingSnapshot,
   calcNights,
   roundTo2,
+  secFrontOfficeOperationalLock,
+  secFoAlertOperationalReadOnly,
+  secFoAllowsExpenseReplacement,
+  secFoAllowsExtraRevenueReplacement,
 } from "./utils/helpers";
 
 const toArray = (v) =>
@@ -1067,6 +1074,13 @@ export default function App() {
   );
   
   const updateExpenses = (newExpenses) => {
+  if (
+    secFrontOfficeOperationalLock(currentUser) &&
+    !secFoAllowsExpenseReplacement(expenses, newExpenses)
+  ) {
+    secFoAlertOperationalReadOnly();
+    return;
+  }
   // ثبّت ids
   const withIds = (newExpenses || []).map((x) => ({
     ...x,
@@ -1155,6 +1169,13 @@ export default function App() {
   };
 
   const saveRevenue = (newRevList) => {
+    if (
+      secFrontOfficeOperationalLock(currentUser) &&
+      !secFoAllowsExtraRevenueReplacement(extraRevenues, newRevList)
+    ) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     setExtraRevenues(newRevList);
     storeSave("ocean_extra_rev_v1", newRevList);
     syncExtraRevenuesToSupabase(newRevList);
@@ -1357,6 +1378,10 @@ useEffect(() => {
 
   // Delete a reservation (used by ReservationsPage). Keeps local storage in sync.
   const handleDeleteReservation = (res) => {
+    if (secFrontOfficeOperationalLock(currentUser)) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     setReservations((prev) => {
       const next = (prev || []).filter(
         (x) => String(x?.id) !== String(res?.id)
@@ -1372,11 +1397,50 @@ useEffect(() => {
 
   // ================= AUTH & CONFIG =================
   const [users, setUsers] = useState(() => {
-    const existing = storeLoad(SEC_LS_USERS);
-    if (existing?.length) return existing;
-    const seed = secSeedUsers();
-    storeSave(SEC_LS_USERS, seed);
-    return seed;
+    let existing = storeLoad(SEC_LS_USERS);
+    if (!existing?.length) {
+      const seed = secSeedUsers();
+      storeSave(SEC_LS_USERS, seed);
+      return seed;
+    }
+    const allPageKeys = APP_PAGES.map((p) => p.key);
+    let changed = false;
+    const hasHossam = existing.some(
+      (u) => String(u?.username || "").toLowerCase() === "hossam"
+    );
+    if (!hasHossam) {
+      existing = [secHossamUser(), ...existing];
+      changed = true;
+    } else {
+      existing = existing.map((u) => {
+        if (String(u?.username || "").toLowerCase() !== "hossam") return u;
+        const curPages = normalizeAllowedPages(u.allowedPages);
+        const pagesMatch =
+          curPages.length === allPageKeys.length &&
+          allPageKeys.every((k) => curPages.includes(k));
+        if (String(u.role || "").toLowerCase() !== "admin" || !pagesMatch) {
+          changed = true;
+        }
+        return { ...u, role: "admin", allowedPages: [...allPageKeys] };
+      });
+    }
+    const frontOfficeLegacy = ["dashboard", "reservations", "rooms", "dailyRate"];
+    existing = existing.map((u) => {
+      if (String(u?.username || "").toLowerCase() !== "frontoffice") return u;
+      const curPages = normalizeAllowedPages(u.allowedPages);
+      const wasLegacyFo =
+        curPages.length === frontOfficeLegacy.length &&
+        frontOfficeLegacy.every((k) => curPages.includes(k));
+      if (!wasLegacyFo) return u;
+      changed = true;
+      return {
+        ...u,
+        role: "frontoffice",
+        allowedPages: [...ROLE_DEFAULT_PAGES.frontoffice],
+      };
+    });
+    if (changed) storeSave(SEC_LS_USERS, existing);
+    return existing;
   });
 
   const [currentUser, setCurrentUser] = useState(() => null);
@@ -1854,7 +1918,11 @@ useEffect(() => {
       mealPlan: "BO",
       channel: "Direct booking",
       paymentMethod: "Cash",
+      paymentStatus: "Not paid",
+      amountPaid: 0,
+      remainingPayment: 0,
       guest: {},
+      notes: "",
       pricing: {
         nightly: 0,
         subtotal: 0,
@@ -1881,6 +1949,11 @@ useEffect(() => {
 
     if (idx === null || idx < 0 || idx >= reservations.length) return;
 
+    if (secFrontOfficeOperationalLock(currentUser)) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
+
     setEditingIndex(idx);
     setEditingReservation(reservations[idx]);
     setShowReservationModal(true);
@@ -1903,6 +1976,10 @@ useEffect(() => {
   };
 
   const handleSaveReservation = (data) => {
+    if (secFrontOfficeOperationalLock(currentUser) && editingIndex !== null) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     const normalizedStatus = normalizeReservationStatus(data?.status);
     const dataWithStatus = { ...data, status: normalizedStatus };
     let next;
@@ -2003,7 +2080,11 @@ useEffect(() => {
       mealPlan: "BO",
       channel: "Direct booking",
       paymentMethod: "Cash",
+      paymentStatus: "Not paid",
+      amountPaid: 0,
+      remainingPayment: 0,
       guest: {},
+      notes: "",
       pricing: {
         nightly: 0,
         subtotal: 0,
@@ -2620,6 +2701,8 @@ useEffect(() => {
     );
   };
 
+  const frontOfficeOperationalLock = secFrontOfficeOperationalLock(currentUser);
+
   if (loginOpen || !currentUser) {
     if (preAuthScreen === "cloud")
       return (
@@ -2707,6 +2790,7 @@ useEffect(() => {
             onEditReservation={handleEditReservation}
             onInvoice={handleInvoice}
             onDeleteReservation={handleDeleteReservation}
+            frontOfficeOperationalLock={frontOfficeOperationalLock}
           />
         )}
 
@@ -2738,6 +2822,7 @@ useEffect(() => {
             totalRooms={BASE_ROOMS.length}
             onUpdate={saveRevenue}
             user={currentUser}
+            frontOfficeOperationalLock={frontOfficeOperationalLock}
           />
         )}
 
@@ -2750,6 +2835,7 @@ useEffect(() => {
               setMoves={setStoreMoves}
               suppliers={toArray(storeSuppliers)}
               setSuppliers={setStoreSuppliers}
+              frontOfficeOperationalLock={frontOfficeOperationalLock}
             />
           </SafePage>
         )}
@@ -2762,6 +2848,7 @@ useEffect(() => {
               setExpenses={updateExpenses}
               supabase={supabase}
               supabaseEnabled={supabaseEnabled}
+              frontOfficeOperationalLock={frontOfficeOperationalLock}
             />
           </SafePage>
         )}
@@ -2825,6 +2912,7 @@ useEffect(() => {
             setSelectedRoom(null);
             handleEditReservation(idx);
           }}
+          frontOfficeOperationalLock={frontOfficeOperationalLock}
         />
       )}
     </div>

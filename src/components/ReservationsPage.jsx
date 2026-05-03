@@ -24,9 +24,20 @@ import {
   FaChartPie,
   FaGlobeAmericas,
   FaCreditCard,
+  FaStickyNote,
+  FaExclamationTriangle,
 } from "react-icons/fa";
 import { FILTER_TABS, BASE_ROOMS, BOOKING_CHANNELS, PAYMENT_METHODS } from "../data/constants";
-import { statusPillClass, isDateBetween, storeLoad, calcNights as calcNightsHelper } from "../utils/helpers";
+import {
+  statusPillClass,
+  isDateBetween,
+  storeLoad,
+  calcNights as calcNightsHelper,
+  getReservationNotesTrimmed,
+  getReservationPaymentStatusOrNull,
+  money,
+  roundTo2,
+} from "../utils/helpers";
 import { getOOSRoomsCountOnDate } from "../utils/oosHelpers";
 import SearchModal from "./SearchModal";
 
@@ -165,6 +176,53 @@ const statusDisplayLabel = (s) => {
 
 const getTotal = (r) => toNumber(r?.pricing?.total ?? r?.total ?? r?.amount ?? 0, 0);
 
+const parseStoredRemaining = (r) => {
+  const remRaw = r?.remainingPayment ?? r?.remaining_payment;
+  if (remRaw === null || remRaw === undefined || String(remRaw).trim() === "") return null;
+  const n = Number(remRaw);
+  return Number.isFinite(n) ? Math.max(0, roundTo2(n)) : null;
+};
+
+const hasRecordedAmountPaid = (r) => {
+  if ("amountPaid" in r && r.amountPaid !== null && r.amountPaid !== undefined && String(r.amountPaid).trim() !== "")
+    return true;
+  if ("amount_paid" in r && r.amount_paid !== null && r.amount_paid !== undefined && String(r.amount_paid).trim() !== "")
+    return true;
+  return false;
+};
+
+/**
+ * Folio settled for "Paid" / "City Ledger" even when amountPaid wasn't backfilled (older rows).
+ * Legacy rows (no paymentStatus): assume fully settled unless remainingPayment implies a balance.
+ */
+const getEffectiveAmountPaid = (r) => {
+  const total = Math.max(0, roundTo2(getTotal(r)));
+  const ps = getReservationPaymentStatusOrNull(r);
+  if (ps === "Paid" || ps === "City Ledger") return total;
+
+  if (hasRecordedAmountPaid(r)) {
+    return Math.min(total, Math.max(0, roundTo2(toNumber(r.amountPaid ?? r.amount_paid, 0))));
+  }
+
+  if (ps === null) {
+    const rem = parseStoredRemaining(r);
+    if (rem != null) return Math.min(total, Math.max(0, roundTo2(total - rem)));
+    return total;
+  }
+
+  const rem = parseStoredRemaining(r);
+  if (rem != null) return Math.min(total, Math.max(0, roundTo2(total - rem)));
+  return 0;
+};
+
+const getOutstandingRemaining = (r) =>
+  Math.max(0, roundTo2(roundTo2(getTotal(r)) - roundTo2(getEffectiveAmountPaid(r))));
+
+const getAmountPaidTooltip = (r) => ({
+  recorded: Math.max(0, roundTo2(toNumber(r.amountPaid ?? r.amount_paid, 0))),
+  effective: roundTo2(getEffectiveAmountPaid(r)),
+});
+
 const calcRoomNights = (r) => {
   const direct = r?.pricing?.nights ?? r?.stay?.nights ?? r?.stay?.roomNights ?? r?.roomNights ?? null;
   if (direct !== null && direct !== undefined && String(direct) !== "") return Math.max(0, Math.round(toNumber(direct, 0)));
@@ -258,6 +316,7 @@ export default function ReservationsPage({
   onEditReservation,
   onInvoice,
   onDeleteReservation,
+  frontOfficeOperationalLock = false,
 }) {
   const [statusFilter, setStatusFilter] = useState("All");
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -280,6 +339,7 @@ export default function ReservationsPage({
 
   const isEditLocked = (r) => isClosedReservation(r) || isCheckedOutReservation(r);
 
+  const reservationEditBlocked = (r) => isEditLocked(r) || (!!r?.id && frontOfficeOperationalLock);
   const passesAdvancedSearch = (r) => {
     const f = searchFilters || {};
 
@@ -347,6 +407,11 @@ export default function ReservationsPage({
 
     return data.sort((a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0));
   }, [reservations, searchFilters, statusFilter]);
+
+  const filteredWithNotes = useMemo(
+    () => filteredReservations.filter((r) => getReservationNotesTrimmed(r)),
+    [filteredReservations]
+  );
 
   const tabCounts = useMemo(() => {
     const base = (reservations || []).filter(passesAdvancedSearch);
@@ -703,7 +768,7 @@ export default function ReservationsPage({
         <div
           style={{
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-start",
             gap: 12,
             padding: "14px 20px",
             marginBottom: 16,
@@ -714,23 +779,188 @@ export default function ReservationsPage({
           }}
           role="alert"
         >
-          <FaRegCalendarCheck style={{ fontSize: 22, color: "#b45309", flexShrink: 0 }} />
-          <div style={{ flex: 1 }}>
+          <FaRegCalendarCheck style={{ fontSize: 22, color: "#b45309", flexShrink: 0, marginTop: 2 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
             <strong style={{ color: "#92400e", fontSize: 14 }}>
               {upcomingCheckIns.length} reservation{upcomingCheckIns.length !== 1 ? "s" : ""} with check-in in the next 3 days
             </strong>
-            <div style={{ marginTop: 4, fontSize: 12, color: "#78350f" }}>
-              {upcomingCheckIns
-                .slice(0, 5)
-                .map((r) => {
-                  const ci = r?.stay?.checkIn ?? r?.checkIn;
-                  const ciYMD = ci ? String(ci).slice(0, 10) : "";
-                  const guest = [getGuestFirstName(r), getGuestLastName(r)].filter(Boolean).join(" ") || "Guest";
-                  const room = getRoomNumber(r) ?? "—";
-                  return `${guest} (Room ${room}) — ${ciYMD}`;
-                })
-                .join(" · ")}
-              {upcomingCheckIns.length > 5 && ` · +${upcomingCheckIns.length - 5} more`}
+            <div
+              style={{
+                marginTop: 10,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                maxHeight: 300,
+                overflowY: "auto",
+              }}
+            >
+              {upcomingCheckIns.map((r, idx) => {
+                const ci = r?.stay?.checkIn ?? r?.checkIn;
+                const ciYMD = ci ? String(ci).slice(0, 10) : "—";
+                const guest =
+                  [getGuestFirstName(r), getGuestLastName(r)].filter(Boolean).join(" ") || "Guest";
+                const room = getRoomNumber(r) ?? "—";
+                return (
+                  <div
+                    key={String(r?.id ?? `up-${idx}`)}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 12,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      background: "rgba(255, 255, 255, 0.72)",
+                      border: "1px solid rgba(245, 158, 11, 0.45)",
+                      boxShadow: "0 1px 2px rgba(180, 83, 9, 0.08)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontWeight: 800,
+                        fontSize: 11,
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase",
+                        color: "#92400e",
+                        padding: "4px 8px",
+                        borderRadius: 8,
+                        background: "rgba(254, 243, 199, 0.95)",
+                        border: "1px solid rgba(251, 191, 36, 0.75)",
+                      }}
+                    >
+                      Room {room}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 650,
+                          fontSize: 12,
+                          color: "#78350f",
+                          marginBottom: 4,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {guest}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#92400e",
+                          lineHeight: 1.45,
+                          fontWeight: 600,
+                        }}
+                      >
+                        Check-in{" "}
+                        <span style={{ fontWeight: 700, color: "#451a03" }}>{ciYMD}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Staff notes reminder (matches current filters / table) */}
+      {filteredWithNotes.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 12,
+            padding: "14px 20px",
+            marginBottom: 16,
+            borderRadius: 12,
+            background: "linear-gradient(135deg, #ecfeff 0%, #e0f2fe 100%)",
+            border: "1px solid #38bdf8",
+            boxShadow: "0 2px 8px rgba(14, 165, 233, 0.12)",
+          }}
+          role="status"
+          aria-live="polite"
+        >
+          <FaStickyNote style={{ fontSize: 22, color: "#0369a1", flexShrink: 0, marginTop: 2 }} aria-hidden />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <strong style={{ color: "#0c4a6e", fontSize: 14 }}>
+              {filteredWithNotes.length} reservation{filteredWithNotes.length !== 1 ? "s" : ""} with staff notes
+            </strong>
+            <div
+              style={{
+                marginTop: 10,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                maxHeight: 300,
+                overflowY: "auto",
+              }}
+            >
+              {filteredWithNotes.map((r, idx) => {
+                const guest =
+                  [getGuestFirstName(r), getGuestLastName(r)].filter(Boolean).join(" ") || "Guest";
+                const room = getRoomNumber(r) ?? "—";
+                const snip = getReservationNotesTrimmed(r);
+                const short = snip.length > 140 ? `${snip.slice(0, 140)}…` : snip;
+                return (
+                  <div
+                    key={String(r?.id ?? idx)}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 12,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      background: "rgba(255, 255, 255, 0.72)",
+                      border: "1px solid rgba(56, 189, 248, 0.4)",
+                      boxShadow: "0 1px 2px rgba(14, 165, 233, 0.06)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontWeight: 800,
+                        fontSize: 11,
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase",
+                        color: "#0369a1",
+                        padding: "4px 8px",
+                        borderRadius: 8,
+                        background: "rgba(224, 242, 254, 0.95)",
+                        border: "1px solid rgba(125, 211, 252, 0.65)",
+                      }}
+                    >
+                      Room {room}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 650,
+                          fontSize: 12,
+                          color: "#0c4a6e",
+                          marginBottom: 4,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {guest}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#075985",
+                          lineHeight: 1.45,
+                          wordBreak: "break-word",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {short}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -891,7 +1121,8 @@ export default function ReservationsPage({
                 </span>
               </th>
               <TH icon={<FaGlobeAmericas size={14} />} label="Channel" title="Booking channel" center />
-              <TH icon={<FaCreditCard size={14} />} label="Pay" title="Payment method" center />
+              <TH icon={<FaCreditCard size={14} />} label="Pay" title="Payment method & settlement" center />
+              <TH icon={<FaCoins size={14} />} label="Due" title="Remaining balance (grand total − amount paid)" right />
               <TH icon={<FaTag size={14} />} label="Sts" title="Status" center />
               <TH icon={<FaSignInAlt size={14} />} label="C/In" title="Check-in Date" right />
               <TH icon={<FaSignOutAlt size={14} />} label="C/Out" title="Check-out Date" right />
@@ -923,6 +1154,44 @@ export default function ReservationsPage({
                 const first = getGuestFirstName(r);
                 const last = getGuestLastName(r);
                 const roomNo = getRoomNumber(r);
+                const resNotes = getReservationNotesTrimmed(r);
+                const payStatusRaw = getReservationPaymentStatusOrNull(r);
+                const outstandingRemaining = getOutstandingRemaining(r);
+                const paidTooltip = getAmountPaidTooltip(r);
+                const dueCellTitle =
+                  Math.abs(roundTo2(paidTooltip.effective - paidTooltip.recorded)) > 0.02
+                    ? `Grand total ${money(getTotal(r))}. Due column uses settled paid ${money(
+                        paidTooltip.effective
+                      )} (stored amount-paid field ${money(paidTooltip.recorded)}).`
+                    : `Grand total ${money(getTotal(r))}, paid ${money(paidTooltip.effective)}`;
+                const payOutstanding =
+                  payStatusRaw === "Not paid" || payStatusRaw === "Partial Payment";
+                const notePreview =
+                  resNotes.length > 320 ? `${resNotes.slice(0, 320)}…` : resNotes;
+                const rowBgDefault = resNotes
+                  ? i % 2 === 0
+                    ? "#fffbeb"
+                    : "#fff7ed"
+                  : payOutstanding
+                    ? i % 2 === 0
+                      ? "#fff7f7"
+                      : "#fef2f2"
+                    : i % 2 === 0
+                      ? "#ffffff"
+                      : "#fafbfc";
+                const rowShadowInitial = resNotes
+                  ? "inset 5px 0 0 #f59e0b, inset 0 -1px 0 rgba(251, 191, 36, 0.35)"
+                  : payOutstanding
+                    ? "inset 5px 0 0 #ef4444, inset 0 -1px 0 rgba(252, 165, 165, 0.3)"
+                    : "none";
+                const rowTitle =
+                  [
+                    resNotes ? `Note: ${notePreview}` : null,
+                    payOutstanding ? `Payment: ${payStatusRaw}` : null,
+                    outstandingRemaining > 0.005 ? `Due: ${money(outstandingRemaining)}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" • ") || undefined;
 
                 const ci = r?.stay?.checkIn ?? r?.checkIn;
                 const co = r?.stay?.checkOut ?? r?.checkOut;
@@ -932,31 +1201,49 @@ export default function ReservationsPage({
                 return (
                   <tr
                     key={r?.id || i}
+                    title={rowTitle}
                     style={{
                       borderBottom: "1px solid #f1f5f9",
-                      transition: "all 0.2s ease",
-                      cursor: isEditLocked(r) ? "default" : "pointer",
-                      background: i % 2 === 0 ? "#ffffff" : "#fafbfc",
+                      transition: "background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease",
+                      cursor: reservationEditBlocked(r) ? "default" : "pointer",
+                      background: rowBgDefault,
+                      boxShadow: rowShadowInitial,
                     }}
                     onClick={(e) => {
-                      if (!isEditLocked(r)) {
+                      if (!reservationEditBlocked(r)) {
                         onEditReservation?.(r);
                       }
                     }}
                     onMouseEnter={(e) => {
-                      if (!isEditLocked(r)) {
-                        e.currentTarget.style.background = "#f0f9ff";
-                        e.currentTarget.style.boxShadow = "inset 4px 0 0 #3b82f6";
+                      if (!reservationEditBlocked(r)) {
+                        if (resNotes) {
+                          e.currentTarget.style.background = "#fef3c7";
+                          e.currentTarget.style.boxShadow =
+                            "inset 5px 0 0 #d97706, inset 0 0 0 1px rgba(245, 158, 11, 0.45)";
+                        } else if (payOutstanding) {
+                          e.currentTarget.style.background = "#fecaca";
+                          e.currentTarget.style.boxShadow =
+                            "inset 5px 0 0 #dc2626, inset 0 0 0 1px rgba(239, 68, 68, 0.38)";
+                        } else {
+                          e.currentTarget.style.background = "#f0f9ff";
+                          e.currentTarget.style.boxShadow = "inset 4px 0 0 #3b82f6";
+                        }
                         e.currentTarget.style.transform = "scale(1.001)";
                       }
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = i % 2 === 0 ? "#ffffff" : "#fafbfc";
-                      e.currentTarget.style.boxShadow = "none";
+                      e.currentTarget.style.background = rowBgDefault;
+                      e.currentTarget.style.boxShadow = rowShadowInitial;
                       e.currentTarget.style.transform = "scale(1)";
                     }}
                   >
-                    <td style={{ padding: "8px 10px", verticalAlign: "middle", fontSize: "0.85rem" }}>
+                    <td
+                      style={{
+                        padding: "8px 10px",
+                        verticalAlign: "middle",
+                        fontSize: "0.85rem",
+                      }}
+                    >
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div
                           style={{
@@ -977,10 +1264,52 @@ export default function ReservationsPage({
                           {(String(first || "G").charAt(0) || "G").toUpperCase()}
                         </div>
                         <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ fontWeight: "600", color: "#1e293b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: "0.85rem" }}>
-                            {first} {last}
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              minWidth: 0,
+                              fontWeight: "600",
+                              color: "#1e293b",
+                              fontSize: "0.85rem",
+                            }}
+                          >
+                            <span
+                              style={{
+                                minWidth: 0,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {first} {last}
+                            </span>
+                            {resNotes ? (
+                              <span
+                                title={notePreview}
+                                aria-label="This reservation has a staff note"
+                                style={{
+                                  flexShrink: 0,
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  color: "#d97706",
+                                }}
+                              >
+                                <FaStickyNote size={13} aria-hidden />
+                              </span>
+                            ) : null}
                           </div>
-                          <small style={{ color: "#94a3b8", fontSize: "0.68rem", whiteSpace: "nowrap", fontWeight: "500" }}>
+                          <small
+                            style={{
+                              color: "#94a3b8",
+                              fontSize: "0.68rem",
+                              whiteSpace: "nowrap",
+                              fontWeight: "500",
+                              display: "block",
+                              marginTop: 4,
+                            }}
+                          >
                             ID: {String(r?.id || "").substring(0, 8)}
                           </small>
                         </div>
@@ -1010,7 +1339,77 @@ export default function ReservationsPage({
                     </td>
 
                     <td style={{ ...tdStrongCenter, fontSize: "0.8rem" }}>{channelDisplayLabel(getChannel(r) || "Direct booking")}</td>
-                    <td style={{ ...tdStrongCenter, fontSize: "0.8rem" }}>{normPayment(getPaymentMethod(r))}</td>
+                    <td
+                      style={{
+                        ...tdStrongCenter,
+                        fontSize: "0.8rem",
+                        verticalAlign: "middle",
+                        paddingTop: payOutstanding ? 10 : undefined,
+                        paddingBottom: payOutstanding ? 10 : undefined,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <span style={{ fontWeight: 650, color: "#334155" }}>
+                          {normPayment(getPaymentMethod(r))}
+                        </span>
+                        {payOutstanding ? (
+                          <span
+                            title={
+                              payStatusRaw === "Partial Payment"
+                                ? "Outstanding balance — collect or record partial payment."
+                                : "Full payment not recorded."
+                            }
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 5,
+                              padding: "4px 9px",
+                              borderRadius: 8,
+                              fontSize: "0.62rem",
+                              fontWeight: 800,
+                              letterSpacing: "0.045em",
+                              textTransform: "uppercase",
+                              color: payStatusRaw === "Not paid" ? "#991b1b" : "#9a3412",
+                              background:
+                                payStatusRaw === "Not paid"
+                                  ? "linear-gradient(180deg,#fecaca 0%, #fca5a5 100%)"
+                                  : "linear-gradient(180deg,#fed7aa 0%, #fdba74 100%)",
+                              border:
+                                payStatusRaw === "Not paid"
+                                  ? "1px solid rgba(220,38,38,0.65)"
+                                  : "1px solid rgba(234,88,12,0.55)",
+                              boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+                              maxWidth: 120,
+                              textAlign: "center",
+                              lineHeight: 1.25,
+                            }}
+                          >
+                            <FaExclamationTriangle size={11} aria-hidden />
+                            {payStatusRaw === "Partial Payment" ? "Partial payment" : "Not paid"}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+
+                    <td
+                      style={{
+                        ...tdStrongRight,
+                        fontSize: "0.82rem",
+                        fontWeight: 700,
+                        color: outstandingRemaining > 0.005 ? "#b45309" : "#64748b",
+                      }}
+                      title={dueCellTitle}
+                    >
+                      {money(outstandingRemaining)}
+                    </td>
 
                     <td style={{ ...tdStrongCenter, padding: "8px 10px" }}>
                       <span
@@ -1050,17 +1449,17 @@ export default function ReservationsPage({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (isEditLocked(r)) return;
+                            if (reservationEditBlocked(r)) return;
                             onEditReservation?.(r);
                           }}
-                          disabled={isEditLocked(r)}
+                          disabled={reservationEditBlocked(r)}
                           style={{
                             ...iconBtn("#64748b"),
-                            opacity: isEditLocked(r) ? 0.45 : 1,
-                            cursor: isEditLocked(r) ? "not-allowed" : "pointer",
+                            opacity: reservationEditBlocked(r) ? 0.45 : 1,
+                            cursor: reservationEditBlocked(r) ? "not-allowed" : "pointer",
                           }}
                           onMouseEnter={(e) => {
-                            if (!isEditLocked(r)) {
+                            if (!reservationEditBlocked(r)) {
                               e.currentTarget.style.background = "#f1f5f9";
                               e.currentTarget.style.borderColor = "#cbd5e1";
                               e.currentTarget.style.transform = "scale(1.05)";
@@ -1071,7 +1470,15 @@ export default function ReservationsPage({
                             e.currentTarget.style.borderColor = "#e2e8f0";
                             e.currentTarget.style.transform = "scale(1)";
                           }}
-                          title={isClosedReservation(r) ? "Month Closed" : isCheckedOutReservation(r) ? "Checked Out" : "Edit"}
+                          title={
+                            isClosedReservation(r)
+                              ? "Month Closed"
+                              : isCheckedOutReservation(r)
+                                ? "Checked Out"
+                                : frontOfficeOperationalLock && r?.id
+                                  ? "Only administrators can edit saved reservations"
+                                  : "Edit"
+                          }
                         >
                           <FaEdit />
                         </button>
@@ -1115,15 +1522,15 @@ export default function ReservationsPage({
                               if (!ok) return;
                               onDeleteReservation(r);
                             }}
-                            disabled={isEditLocked(r)}
+                            disabled={reservationEditBlocked(r)}
                             style={{
                               ...iconBtn("#ef4444"),
                               borderColor: "#fee2e2",
-                              opacity: isEditLocked(r) ? 0.45 : 1,
-                              cursor: isEditLocked(r) ? "not-allowed" : "pointer",
+                              opacity: reservationEditBlocked(r) ? 0.45 : 1,
+                              cursor: reservationEditBlocked(r) ? "not-allowed" : "pointer",
                             }}
                             onMouseEnter={(e) => {
-                              if (!isEditLocked(r)) {
+                              if (!reservationEditBlocked(r)) {
                                 e.currentTarget.style.background = "#fef2f2";
                                 e.currentTarget.style.borderColor = "#fecaca";
                                 e.currentTarget.style.transform = "scale(1.05)";
@@ -1146,7 +1553,7 @@ export default function ReservationsPage({
               })
             ) : (
               <tr>
-                <td colSpan={15} style={{ padding: "60px 20px", textAlign: "center", color: "#64748b", verticalAlign: "middle", background: "#fafbfc" }}>
+                <td colSpan={16} style={{ padding: "60px 20px", textAlign: "center", color: "#64748b", verticalAlign: "middle", background: "#fafbfc" }}>
                   <div style={{ 
                     marginBottom: 16, 
                     fontSize: "3rem", 

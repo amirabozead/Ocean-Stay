@@ -32,7 +32,7 @@ import {
   Cell,
   Legend,
 } from "recharts";
-import { roundTo2 } from "../utils/helpers";
+import { roundTo2, secFoAlertOperationalReadOnly } from "../utils/helpers";
 
 const HOTEL_LOGO = "/logo.png";
 
@@ -144,7 +144,12 @@ const TrendDot = ({ cx, cy, payload, isMax, isMin }) => {
   );
 };
 
-export default function RevenuePage({ data = [], reservations = [], onUpdate }) {
+export default function RevenuePage({
+  data = [],
+  reservations = [],
+  onUpdate,
+  frontOfficeOperationalLock = false,
+}) {
   const todayYMD = toYMD(new Date());
 
   // Filter
@@ -206,6 +211,10 @@ export default function RevenuePage({ data = [], reservations = [], onUpdate }) 
   };
 
   const openEditModal = (item) => {
+    if (frontOfficeOperationalLock && item?.id) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     setEditingId(item?.id || null);
     setFormError("");
     setForm({
@@ -371,6 +380,10 @@ const isCheckedIn = status === "checked-in" || status === "checked in" || status
   }, [safeData, safeReservations, rangeFrom, rangeTo, todayYMD]);
 
   const saveForm = () => {
+    if (frontOfficeOperationalLock && editingId) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     setFormError("");
 
     const date = String(form.date || "").trim();
@@ -398,6 +411,10 @@ const isCheckedIn = status === "checked-in" || status === "checked in" || status
   };
 
   const handleDelete = (id) => {
+    if (frontOfficeOperationalLock && id) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     if (!onUpdate) return;
     if (!id) return;
     if (window.confirm("Delete this transaction?")) {

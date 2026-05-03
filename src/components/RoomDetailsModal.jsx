@@ -1,12 +1,13 @@
 import React, { useState } from "react";
 import { 
   FaTimes, FaEdit, FaUserCircle, FaCalendarAlt, 
-  FaSignOutAlt, FaBed, FaCheckCircle, FaBroom, FaTools, FaConciergeBell 
+  FaSignOutAlt, FaBed, FaCheckCircle, FaBroom, FaTools, FaConciergeBell, FaStickyNote 
 } from "react-icons/fa";
-import { calcNights } from "../utils/helpers";
+import { calcNights, getReservationNotesTrimmed, SEC_FRONT_OFFICE_READONLY_MESSAGE } from "../utils/helpers";
 
-export default function RoomDetailsModal({ room, onClose, onEditReservation, onUpdateStatus }) {
+export default function RoomDetailsModal({ room, onClose, onEditReservation, onUpdateStatus, frontOfficeOperationalLock = false }) {
   const cr = room.currentReservation;
+  const resNotes = getReservationNotesTrimmed(cr);
   const guestName = cr ? `${cr.guest?.firstName || ""} ${cr.guest?.lastName || ""}` : "—";
   const checkIn = cr?.stay?.checkIn || "—";
   const checkOut = cr?.stay?.checkOut || "—";
@@ -192,6 +193,28 @@ export default function RoomDetailsModal({ room, onClose, onEditReservation, onU
                     <span className="date-hero-val">{checkOut}</span>
                   </div>
                 </div>
+
+                {resNotes ? (
+                  <div
+                    role="status"
+                    style={{
+                      marginTop: 22,
+                      textAlign: "left",
+                      padding: "14px 16px",
+                      borderRadius: 14,
+                      background: "linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)",
+                      border: "1px solid #fcd34d",
+                      boxShadow: "0 2px 8px rgba(245, 158, 11, 0.12)",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, color: "#92400e", fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      <FaStickyNote /> Reservation note
+                    </div>
+                    <p style={{ margin: "10px 0 0", fontSize: "0.9rem", color: "#78350f", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                      {resNotes}
+                    </p>
+                  </div>
+                ) : null}
               </div>
             ) : (
               /* Empty State */
@@ -206,9 +229,19 @@ export default function RoomDetailsModal({ room, onClose, onEditReservation, onU
           {/* Footer (Action Button) */}
           {cr && (
             <div className="panel-footer">
-              <button 
-                className="btn-manage-hero" 
-                onClick={() => onEditReservation(room.currentReservationIndex)}
+              <button
+                className="btn-manage-hero"
+                disabled={frontOfficeOperationalLock}
+                title={frontOfficeOperationalLock ? SEC_FRONT_OFFICE_READONLY_MESSAGE : undefined}
+                style={
+                  frontOfficeOperationalLock
+                    ? { opacity: 0.5, cursor: "not-allowed", boxShadow: "none" }
+                    : undefined
+                }
+                onClick={() => {
+                  if (frontOfficeOperationalLock) return;
+                  onEditReservation(room.currentReservationIndex);
+                }}
               >
                 <FaEdit /> Manage Reservation
               </button>

@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "supabase:create-user": "node scripts/create-app-user.mjs"
   },
   "dependencies": {
     "@react-google-maps/api": "^2.20.8",

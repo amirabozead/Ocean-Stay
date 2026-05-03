@@ -6,11 +6,19 @@ import {
 } from "react-icons/fa";
 
 // تأكد من المسارات دي عندك
-import { money, uid, isoNow, roundTo2 } from "../utils/helpers"; 
+import { money, uid, isoNow, roundTo2, secFoAlertOperationalReadOnly, secFoAllowsSupplierListReplacement } from "../utils/helpers"; 
 
 const HOTEL_LOGO = "/logo.png"; 
 
-export default function StorePage({ items, setItems, moves, setMoves, suppliers, setSuppliers }) {
+export default function StorePage({
+  items,
+  setItems,
+  moves,
+  setMoves,
+  suppliers,
+  setSuppliers,
+  frontOfficeOperationalLock = false,
+}) {
   const [view, setView] = useState("items"); // items | moves | suppliers
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("All");
@@ -62,12 +70,22 @@ export default function StorePage({ items, setItems, moves, setMoves, suppliers,
 
   // Handlers
   const openAdd = () => setItemModal({ open: true, mode: "add", item: null });
-  const openEdit = (it) => setItemModal({ open: true, mode: "edit", item: it });
+  const openEdit = (it) => {
+    if (frontOfficeOperationalLock) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
+    setItemModal({ open: true, mode: "edit", item: it });
+  };
   const closeItemModal = () => setItemModal({ open: false, mode: "add", item: null });
 
   const saveItem = (payload) => {
     if (!payload?.name?.trim()) return;
     if (itemModal.mode === "edit" && itemModal.item) {
+      if (frontOfficeOperationalLock) {
+        secFoAlertOperationalReadOnly();
+        return;
+      }
       const id = itemModal.item.id;
       const next = (items || []).map((x) =>
         x.id === id ? { ...x, ...payload, updatedAt: isoNow() } : x
@@ -89,6 +107,10 @@ export default function StorePage({ items, setItems, moves, setMoves, suppliers,
   };
 
   const deleteItem = (id) => {
+    if (frontOfficeOperationalLock) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     if (!id) return;
     if (!window.confirm("Delete this item permanently?")) return;
     setItems((items || []).filter((x) => x.id !== id));
@@ -96,6 +118,10 @@ export default function StorePage({ items, setItems, moves, setMoves, suppliers,
   };
 
   const applyMove = ({ itemId, type, qty, note, ref }) => {
+    if (frontOfficeOperationalLock) {
+      secFoAlertOperationalReadOnly();
+      return;
+    }
     const qn = Number(qty || 0);
     if (!itemId || !qn || qn <= 0) return;
     const t = type || "IN";
@@ -331,9 +357,35 @@ headerCard: {
                                         </div>
                                         <div style={{ textAlign: "right", fontFamily: "monospace", color: "#475569" }}>{money(it.cost)}</div>
                                         <div style={{ textAlign: "right", fontWeight: "700", color: "#334155" }}>{money(stock * it.cost)}</div>
-                                        <div style={{ display: "flex", justifyContent: "center", gap: "8px" }}>
-                                            <button onClick={() => openEdit(it)} style={{ border: "none", background: "none", color: "#3b82f6", cursor: "pointer" }} title="Edit"><FaEdit size={16} /></button>
-                                            <button onClick={() => deleteItem(it.id)} style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer" }} title="Delete"><FaTrash size={16} /></button>
+                        <div style={{ display: "flex", justifyContent: "center", gap: "8px" }}>
+                                            <button
+                                              type="button"
+                                              disabled={frontOfficeOperationalLock}
+                                              title={frontOfficeOperationalLock ? "Only administrators can edit saved items" : "Edit"}
+                                              onClick={() => openEdit(it)}
+                                              style={{
+                                                border: "none",
+                                                background: "none",
+                                                color: frontOfficeOperationalLock ? "#94a3b8" : "#3b82f6",
+                                                cursor: frontOfficeOperationalLock ? "not-allowed" : "pointer",
+                                              }}
+                                            >
+                                              <FaEdit size={16} />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={frontOfficeOperationalLock}
+                                              title={frontOfficeOperationalLock ? "Only administrators can delete items" : "Delete"}
+                                              onClick={() => deleteItem(it.id)}
+                                              style={{
+                                                border: "none",
+                                                background: "none",
+                                                color: frontOfficeOperationalLock ? "#94a3b8" : "#ef4444",
+                                                cursor: frontOfficeOperationalLock ? "not-allowed" : "pointer",
+                                              }}
+                                            >
+                                              <FaTrash size={16} />
+                                            </button>
                                         </div>
                                     </div>
                                 );
@@ -351,8 +403,34 @@ headerCard: {
                             <FaHistory style={{ color: "#3b82f6" }} /> Movement History
                         </h2>
                         <div style={{ display: "flex", gap: "10px" }}>
-                            <button onClick={() => setMoveModal({ open: true, type: "IN" })} style={{...styles.btnPrimary, background: "#10b981"}}><FaArrowLeft /> Stock In</button>
-                            <button onClick={() => setMoveModal({ open: true, type: "OUT" })} style={{...styles.btnPrimary, background: "#ef4444"}}><FaArrowRight /> Stock Out</button>
+                            <button
+                              type="button"
+                              disabled={frontOfficeOperationalLock}
+                              title={frontOfficeOperationalLock ? "Only administrators can record stock movements" : undefined}
+                              onClick={() => setMoveModal({ open: true, type: "IN" })}
+                              style={{
+                                ...styles.btnPrimary,
+                                background: "#10b981",
+                                opacity: frontOfficeOperationalLock ? 0.5 : 1,
+                                cursor: frontOfficeOperationalLock ? "not-allowed" : "pointer",
+                              }}
+                            >
+                              <FaArrowLeft /> Stock In
+                            </button>
+                            <button
+                              type="button"
+                              disabled={frontOfficeOperationalLock}
+                              title={frontOfficeOperationalLock ? "Only administrators can record stock movements" : undefined}
+                              onClick={() => setMoveModal({ open: true, type: "OUT" })}
+                              style={{
+                                ...styles.btnPrimary,
+                                background: "#ef4444",
+                                opacity: frontOfficeOperationalLock ? 0.5 : 1,
+                                cursor: frontOfficeOperationalLock ? "not-allowed" : "pointer",
+                              }}
+                            >
+                              <FaArrowRight /> Stock Out
+                            </button>
                         </div>
                     </div>
                     
@@ -396,7 +474,13 @@ headerCard: {
                 <div style={{ ...styles.panel, padding: "30px", background: "#f8fafc", border: "none", boxShadow: "none" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "25px" }}>
                         <h2 style={{ margin: 0, color: "#1e293b", fontSize: "20px" }}>Trusted Suppliers</h2>
-                        <button style={styles.btnPrimary} onClick={() => setSupModal(true)}><FaPlus /> Manage List</button>
+                        <button
+                          style={styles.btnPrimary}
+                          title={frontOfficeOperationalLock ? "You can add supplier records here; administrators can edit or remove existing vendors." : undefined}
+                          onClick={() => setSupModal(true)}
+                        >
+                          <FaPlus /> Manage List
+                        </button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "20px" }}>
                         {suppliers.map(s => (
@@ -429,10 +513,22 @@ headerCard: {
                     <p style={{ margin: 0, fontSize: "12px", opacity: 0.8 }}>Manage inventory flow</p>
                 </div>
                 <div style={{ padding: "20px" }}>
-                    <button style={{ ...styles.actionBtn, background: "#f0f9ff", color: "#0284c7", border: "1px solid #bae6fd" }} onClick={() => setMoveModal({ open: true, type: "IN" })}>
+                    <button
+                      style={{ ...styles.actionBtn, background: "#f0f9ff", color: "#0284c7", border: "1px solid #bae6fd" }}
+                      type="button"
+                      disabled={frontOfficeOperationalLock}
+                      title={frontOfficeOperationalLock ? "Only administrators can record stock movements" : undefined}
+                      onClick={() => setMoveModal({ open: true, type: "IN" })}
+                    >
                         <FaPlus /> Record Stock In
                     </button>
-                    <button style={{ ...styles.actionBtn, background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }} onClick={() => setMoveModal({ open: true, type: "OUT" })}>
+                    <button
+                      style={{ ...styles.actionBtn, background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }}
+                      type="button"
+                      disabled={frontOfficeOperationalLock}
+                      title={frontOfficeOperationalLock ? "Only administrators can record stock movements" : undefined}
+                      onClick={() => setMoveModal({ open: true, type: "OUT" })}
+                    >
                         <FaArrowRight /> Record Stock Out
                     </button>
                 </div>
@@ -475,8 +571,35 @@ headerCard: {
 
       {/* MODALS */}
       {itemModal.open && <StoreItemModal mode={itemModal.mode} item={itemModal.item} suppliers={suppliers} onClose={closeItemModal} onSave={saveItem} />}
-      {moveModal.open && <StockMoveModal type={moveModal.type} presetItemId={moveModal.itemId} items={items} onClose={() => setMoveModal({ open: false, type: "IN" })} onApply={(p) => { applyMove(p); setMoveModal({ open: false }); }} />}
-      {supModal && <SuppliersModal suppliers={suppliers} onClose={() => setSupModal(false)} onChange={setSuppliers} />}
+      {moveModal.open && (
+        <StockMoveModal
+          type={moveModal.type}
+          presetItemId={moveModal.itemId}
+          items={items}
+          onClose={() => setMoveModal({ open: false, type: "IN" })}
+          onApply={(p) => {
+            applyMove(p);
+            setMoveModal({ open: false });
+          }}
+          readOnlyLocksApply={frontOfficeOperationalLock}
+        />
+      )}
+      {supModal && (
+        <SuppliersModal
+          suppliers={suppliers}
+          onClose={() => setSupModal(false)}
+          onChange={(next) => {
+            if (
+              frontOfficeOperationalLock &&
+              !secFoAllowsSupplierListReplacement(suppliers, next)
+            ) {
+              secFoAlertOperationalReadOnly();
+              return;
+            }
+            setSuppliers(next);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -538,7 +661,7 @@ function StoreItemModal({ mode, item, suppliers, onClose, onSave }) {
   );
 }
 
-function StockMoveModal({ type, presetItemId, items, onClose, onApply }) {
+function StockMoveModal({ type, presetItemId, items, onClose, onApply, readOnlyLocksApply = false }) {
   const [itemId, setItemId] = useState(presetItemId || (items?.[0]?.id || ""));
   const [qty, setQty] = useState("");
   const [note, setNote] = useState("");
@@ -570,7 +693,21 @@ function StockMoveModal({ type, presetItemId, items, onClose, onApply }) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px" }}>
             <button onClick={onClose} style={modalStyle.btnSec}>Cancel</button>
-            <button onClick={() => onApply({ itemId, type, qty, note })} disabled={!qty} style={{...modalStyle.btnPrimary, background: type==="OUT"?"#ef4444":"#10b981", boxShadow: "none"}}>Confirm</button>
+            <button
+              type="button"
+              onClick={() => onApply({ itemId, type, qty, note })}
+              disabled={!qty || readOnlyLocksApply}
+              title={readOnlyLocksApply ? "Only administrators can record stock movements" : undefined}
+              style={{
+                ...modalStyle.btnPrimary,
+                background: type === "OUT" ? "#ef4444" : "#10b981",
+                boxShadow: "none",
+                opacity: readOnlyLocksApply ? 0.55 : 1,
+                cursor: readOnlyLocksApply ? "not-allowed" : "pointer",
+              }}
+            >
+              Confirm
+            </button>
         </div>
       </div>
     </div>

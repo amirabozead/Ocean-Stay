@@ -1,7 +1,7 @@
 // src/utils/helpers.js
 
 /* ================= DATE HELPERS ================= */
-import { APP_PAGES, ROLE_DEFAULT_PAGES } from "../data/constants";
+import { APP_PAGES, ROLE_DEFAULT_PAGES, ROLE_DEFAULT_PAGES_FRONT_OFFICE, PAYMENT_STATUSES } from "../data/constants";
 export const toMidnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
 export const ymd = (d) => {
@@ -192,6 +192,29 @@ export const isOOSPhysical = (v) => {
 };
 
 export const normalizePhysicalStatus = (v) => (isOOSPhysical(v) ? "Out of Service" : String(v || "").trim() || "Clean");
+
+/** Trimmed internal note on a reservation (`notes`, or legacy `note`). */
+export const getReservationNotesTrimmed = (r) => {
+  const raw = r?.notes ?? r?.note ?? "";
+  const s = typeof raw === "string" ? raw : String(raw ?? "");
+  return s.trim();
+};
+
+/**
+ * Settlement payment status, or null if never set on the reservation (legacy rows → no UX alert noise).
+ */
+export const getReservationPaymentStatusOrNull = (r) => {
+  const raw = r?.paymentStatus ?? r?.payment_status;
+  if (raw === undefined || raw === null || String(raw).trim() === "") return null;
+  const s = typeof raw === "string" ? raw.trim() : String(raw).trim();
+  return PAYMENT_STATUSES.includes(s) ? s : "Not paid";
+};
+
+export const reservationPaymentNeedsAttention = (r) => {
+  const ps = getReservationPaymentStatusOrNull(r);
+  return ps === "Not paid" || ps === "Partial Payment";
+};
+
 /* ================= SECURITY HELPERS ================= */
 /** app_users.allowed_pages from Postgres may be an array, or a JSON string if stored oddly */
 export const normalizeAllowedPages = (value) => {
@@ -220,15 +243,190 @@ export const secCanAccessPage = (user, pageKey) => {
 };
 
 export const secDefaultPagesForRole = (role) => {
-  return ROLE_DEFAULT_PAGES[role] || ROLE_DEFAULT_PAGES["viewer"];
+  const r = String(role || "").trim().toLowerCase();
+  const aliases = { front_office: "frontoffice", store_keeper: "store" };
+  const key = aliases[r] || r;
+  return ROLE_DEFAULT_PAGES[key] || ROLE_DEFAULT_PAGES["viewer"];
 };
+
+export const SEC_FRONT_OFFICE_READONLY_MESSAGE =
+  "Front office can create new bookings, revenue lines, and expenses. Only an administrator can change or delete them after saving.";
+
+export const secFoAlertOperationalReadOnly = () => alert(SEC_FRONT_OFFICE_READONLY_MESSAGE);
+
+export const secIsAdminUser = (user) => {
+  if (!user) return false;
+  const u = String(user.username ?? "").trim().toLowerCase();
+  if (u === "admin") return true;
+  const r = String(user.role ?? "").trim().toLowerCase();
+  return r === "admin";
+};
+
+export const secIsFrontOfficeStaff = (user) => {
+  if (!user) return false;
+  const canonRole = String(user.role ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "")
+    .replace(/-/g, "")
+    .replace(/\s+/g, "");
+  if (canonRole === "frontoffice") return true;
+  const un = String(user.username ?? "").trim().toLowerCase();
+  return un === "frontoffice";
+};
+
+/** True when allowed pages equal the canonical front-office set (handles Supabase users still marked viewer/manager role). */
+export const secUserHasExactFrontOfficePages = (user) => {
+  if (!user) return false;
+  const pageSig = (arr) =>
+    [...new Set((arr || []).map(String).filter(Boolean))].sort().join("\0");
+  const userSig = pageSig(normalizeAllowedPages(user.allowedPages));
+  const refSig = pageSig(ROLE_DEFAULT_PAGES_FRONT_OFFICE);
+  return !!userSig && userSig === refSig;
+};
+
+/** Reception: create-only for reservations / extra revenues / expenses (unless admin). */
+export const secFrontOfficeOperationalLock = (user) =>
+  !!user &&
+  !secIsAdminUser(user) &&
+  (secIsFrontOfficeStaff(user) || secUserHasExactFrontOfficePages(user));
+
+const foNormExtraRevRow = (r) => ({
+  id: String(r?.id ?? ""),
+  date: String(r?.date ?? r?.revenue_date ?? "").slice(0, 10),
+  type: String(r?.type ?? "").trim(),
+  description: String(r?.description ?? "").trim(),
+  amount: roundTo2(Number(r?.amount ?? 0)),
+});
+
+/** True when the new list preserves every previous row unchanged; new rows allowed. */
+export const secFoAllowsExtraRevenueReplacement = (prev, next) => {
+  const pArr = Array.isArray(prev) ? prev : [];
+  const nArr = Array.isArray(next) ? next : [];
+  const pMap = new Map();
+  for (const row of pArr) {
+    const id = String(row?.id ?? "");
+    if (!id) continue;
+    pMap.set(id, foNormExtraRevRow(row));
+  }
+  const nMap = new Map();
+  for (const row of nArr) {
+    const id = String(row?.id ?? "");
+    if (!id) continue;
+    nMap.set(id, foNormExtraRevRow(row));
+  }
+  for (const id of pMap.keys()) {
+    if (!nMap.has(id)) return false;
+    const a = pMap.get(id);
+    const b = nMap.get(id);
+    if (
+      a.date !== b.date ||
+      a.type !== b.type ||
+      a.description !== b.description ||
+      a.amount !== b.amount
+    )
+      return false;
+  }
+  return true;
+};
+
+const foNormExpenseRow = (e) => ({
+  id: String(e?.id ?? ""),
+  date: String(e?.date ?? e?.expense_date ?? "").slice(0, 10),
+  category: String(e?.category ?? "").trim(),
+  vendor: String(e?.vendor ?? "").trim(),
+  description: String(e?.description ?? "").trim(),
+  amount: roundTo2(Number(e?.amount ?? 0)),
+  method: String(e?.method ?? "").trim(),
+  ref: String(e?.ref ?? "").trim(),
+});
+
+export const secFoAllowsExpenseReplacement = (prev, next) => {
+  const pArr = Array.isArray(prev) ? prev : [];
+  const nArr = Array.isArray(next) ? next : [];
+  const pMap = new Map();
+  for (const row of pArr) {
+    const id = String(row?.id ?? "");
+    if (!id) continue;
+    pMap.set(id, foNormExpenseRow(row));
+  }
+  const nMap = new Map();
+  for (const row of nArr) {
+    const id = String(row?.id ?? "");
+    if (!id) continue;
+    nMap.set(id, foNormExpenseRow(row));
+  }
+  for (const id of pMap.keys()) {
+    if (!nMap.has(id)) return false;
+    const a = pMap.get(id);
+    const b = nMap.get(id);
+    if (
+      a.date !== b.date ||
+      a.category !== b.category ||
+      a.vendor !== b.vendor ||
+      a.description !== b.description ||
+      a.amount !== b.amount ||
+      a.method !== b.method ||
+      a.ref !== b.ref
+    )
+      return false;
+  }
+  return true;
+};
+
+const foNormSupplierRow = (s) => ({
+  id: String(s?.id ?? ""),
+  name: String(s?.name ?? "").trim(),
+  phone: String(s?.phone ?? "").trim(),
+  email: String(s?.email ?? "").trim(),
+});
+
+export const secFoAllowsSupplierListReplacement = (prev, next) => {
+  const pArr = Array.isArray(prev) ? prev : [];
+  const nArr = Array.isArray(next) ? next : [];
+  const pMap = new Map();
+  for (const row of pArr) {
+    const id = String(row?.id ?? "");
+    if (!id) continue;
+    pMap.set(id, foNormSupplierRow(row));
+  }
+  const nMap = new Map();
+  for (const row of nArr) {
+    const id = String(row?.id ?? "");
+    if (!id) continue;
+    nMap.set(id, foNormSupplierRow(row));
+  }
+  for (const id of pMap.keys()) {
+    if (!nMap.has(id)) return false;
+    const a = pMap.get(id);
+    const b = nMap.get(id);
+    if (a.name !== b.name || a.phone !== b.phone || a.email !== b.email) return false;
+  }
+  return true;
+};
+
+/** Default local-login user factory (username + PIN); full admin (all pages + Security manager). */
+export const secHossamUser = () => ({
+  id: storeUid("u"),
+  username: "Hossam",
+  pin: "Hossam@2026",
+  role: "admin",
+  allowedPages: APP_PAGES.map((p) => p.key),
+});
 
 export const secSeedUsers = () => {
   return [
     { id: storeUid("u"), username: "admin", pin: "1234", allowedPages: APP_PAGES.map((p) => p.key) },
     { id: storeUid("u"), username: "accountant", pin: "1111", allowedPages: ["dashboard", "expenses", "reports"] },
-    { id: storeUid("u"), username: "frontoffice", pin: "2222", allowedPages: ["dashboard", "reservations", "rooms", "dailyRate"] },
+    {
+      id: storeUid("u"),
+      username: "frontoffice",
+      pin: "2222",
+      role: "frontoffice",
+      allowedPages: [...ROLE_DEFAULT_PAGES.frontoffice],
+    },
     { id: storeUid("u"), username: "store", pin: "3333", allowedPages: ["dashboard", "store"] },
+    secHossamUser(),
   ];
 };
 // دالة لحساب تسعير الليالي (مطلوبة في app.jsx)

@@ -1,13 +1,34 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { 
   FaUser, FaCalendarAlt, FaConciergeBell, FaCreditCard, 
-  FaInfoCircle, FaTimes, FaCheck, FaExclamationTriangle 
+  FaInfoCircle, FaTimes, FaCheck, FaExclamationTriangle, FaStickyNote,
 } from "react-icons/fa";
 import { 
-  NATIONALITIES, STATUS_LIST, PAYMENT_METHODS, BASE_ROOMS, BOOKING_CHANNELS 
+  NATIONALITIES, STATUS_LIST, PAYMENT_METHODS, PAYMENT_STATUSES, BASE_ROOMS, BOOKING_CHANNELS 
 } from "../data/constants"; 
 import { money, calcNights, storeLoad, roundTo2 } from "../utils/helpers";
 import { isRoomOOSDuringPeriod, isRoomOOSOnDate } from "../utils/oosHelpers"; 
+
+function normalizeReservationPaymentStatus(data) {
+  const raw = data?.paymentStatus ?? data?.payment_status ?? "Not paid";
+  const s = typeof raw === "string" ? raw.trim() : String(raw ?? "").trim();
+  return PAYMENT_STATUSES.includes(s) ? s : "Not paid";
+}
+
+/** String for controlled money input — empty allowed. */
+function moneyFieldToString(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return "";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return String(roundTo2(Math.max(0, n)));
+}
+
+function parseAmountField(s) {
+  if (s === "" || s == null || String(s).trim() === "") return 0;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return roundTo2(n);
+}
 
 export default function ReservationModal({ 
   onClose, onSave, initialData, mode, dailyRates, roomPhysicalStatus, reservations = [] 
@@ -21,9 +42,20 @@ export default function ReservationModal({
   const [roomType, setRoomType] = useState(initialData?.room?.roomType || "Standard Double Room");
   const [channel, setChannel] = useState(initialData?.channel ?? initialData?.source ?? "Direct booking");
   const [paymentMethod, setPaymentMethod] = useState(initialData?.paymentMethod || "Cash");
+  const [paymentStatus, setPaymentStatus] = useState(() =>
+    normalizeReservationPaymentStatus(initialData)
+  );
+  const [amountPaidStr, setAmountPaidStr] = useState(() =>
+    moneyFieldToString(initialData?.amountPaid ?? initialData?.amount_paid)
+  );
   const [checkIn, setCheckIn] = useState(initialData?.stay?.checkIn || "");
   const [checkOut, setCheckOut] = useState(initialData?.stay?.checkOut || "");
   const [status, setStatus] = useState(initialData?.status || "Booked");
+  const [notes, setNotes] = useState(() => {
+    const n = initialData?.notes ?? initialData?.note ?? "";
+    return typeof n === "string" ? n : String(n ?? "");
+  });
+  const [noteNotifyDismissed, setNoteNotifyDismissed] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const errorRef = useRef(null);
 
@@ -114,6 +146,18 @@ export default function ReservationModal({
     if (pr?.packageSubtotal != null && n > 0 && p > 0)
       setManualFnbPerNightPerPax(String(roundTo2(Number(pr.packageSubtotal) / (n * p))));
   }, [mode, initialData?.id]);
+
+  useEffect(() => {
+    const n = initialData?.notes ?? initialData?.note ?? "";
+    setNotes(typeof n === "string" ? n : String(n ?? ""));
+    setNoteNotifyDismissed(false);
+    setPaymentStatus(normalizeReservationPaymentStatus(initialData ?? {}));
+    setAmountPaidStr(moneyFieldToString(initialData?.amountPaid ?? initialData?.amount_paid));
+  }, [mode, initialData?.id]);
+
+  useEffect(() => {
+    if (!notes.trim()) setNoteNotifyDismissed(false);
+  }, [notes]);
 
   // --- Logic: Financials ---
   const nights = calcNights(checkIn, checkOut);
@@ -242,6 +286,13 @@ export default function ReservationModal({
     };
   }, [roomType, checkIn, checkOut, dailyRates, mealPlan, pax, taxRate, serviceChargeRate, cityTaxFixed, nights, useManualRoomRate, useManualFnb, manualRoomRatePerNight, manualFnbPerNightPerPax, fnbPerNightPerPax, paxNum]);
 
+  const amountPaidNum = parseAmountField(amountPaidStr);
+  const remainingPaymentNum = pricing.ok
+    ? roundTo2(Math.max(0, roundTo2(pricing.total - amountPaidNum)))
+    : 0;
+  const paidExceedsTotal =
+    pricing.ok && roundTo2(amountPaidNum - pricing.total) > 0.02;
+
   const handleSubmit = () => {
     // Clear any previous errors
     setErrorMessage(null);
@@ -369,10 +420,13 @@ export default function ReservationModal({
     onSave({
       guest: { firstName, lastName, nationality },
       pax: paxNum, mealPlan,
-      channel, paymentMethod,
+      channel, paymentMethod, paymentStatus,
+      amountPaid: amountPaidNum,
+      remainingPayment: remainingPaymentNum,
       room: { roomType, roomNumber, roomRate: pricing.avgNightly },
       stay: { checkIn, checkOut }, pricing,
-      status
+      status,
+      notes: notes.trim(),
     });
   };
 
@@ -405,7 +459,8 @@ export default function ReservationModal({
         .section-label { display: flex; align-items: center; gap: 10px; color: #1e293b; font-weight: 700; margin-bottom: 18px; font-size: 0.9rem; text-transform: uppercase; }
         .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 15px; }
         .field label { font-size: 0.75rem; font-weight: 700; color: #64748b; }
-        .field input, .field select { padding: 10px 14px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 0.9rem; }
+        .field input, .field select, .field textarea { padding: 10px 14px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 0.9rem; font-family: inherit; }
+        .field textarea { min-height: 88px; resize: vertical; line-height: 1.45; }
         
         /* Folio Summary Updated */
         .ocean-price-card { 
@@ -501,6 +556,48 @@ export default function ReservationModal({
           margin-bottom: 6px;
           font-size: 0.85rem;
         }
+
+        .reservation-notes-notify {
+          padding: 0 35px 14px;
+          background: linear-gradient(180deg, #fffbeb 0%, #ffffff 100%);
+          border-bottom: 1px solid #fde68a;
+        }
+        .reservation-notes-notify-inner {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          padding: 12px 14px;
+          background: #fffbeb;
+          border: 1px solid #fcd34d;
+          border-radius: 12px;
+          color: #92400e;
+          font-size: 0.88rem;
+        }
+        .reservation-notes-notify-inner .reservation-notes-preview {
+          margin: 6px 0 0 0;
+          line-height: 1.45;
+          color: #78350f;
+          font-weight: 500;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        .reservation-notes-notify-dismiss {
+          margin-left: auto;
+          flex-shrink: 0;
+          background: rgba(146, 64, 14, 0.12);
+          border: none;
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          cursor: pointer;
+          color: #92400e;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .reservation-notes-notify-dismiss:hover {
+          background: rgba(146, 64, 14, 0.22);
+        }
       `}</style>
 
       <div className="ocean-modal-overlay">
@@ -553,6 +650,28 @@ export default function ReservationModal({
             </div>
             <button onClick={onClose} style={{background:'none', border:'none', fontSize:'1.4rem', cursor:'pointer', color: '#cbd5e1'}}><FaTimes /></button>
           </div>
+
+          {notes.trim() && !noteNotifyDismissed && (
+            <div className="reservation-notes-notify" role="status" aria-live="polite">
+              <div className="reservation-notes-notify-inner">
+                <FaStickyNote size={20} style={{ flexShrink: 0, marginTop: 2 }} aria-hidden />
+                <div style={{ minWidth: 0 }}>
+                  <strong style={{ display: "block", fontSize: "0.9rem" }}>Staff note on this reservation</strong>
+                  <p className="reservation-notes-preview">
+                    {notes.trim().length > 220 ? `${notes.trim().slice(0, 220)}…` : notes.trim()}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="reservation-notes-notify-dismiss"
+                  aria-label="Dismiss note notification"
+                  onClick={() => setNoteNotifyDismissed(true)}
+                >
+                  <FaTimes />
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="ocean-modal-body">
             <div className="ocean-grid">
@@ -609,6 +728,19 @@ export default function ReservationModal({
                   </div>
                 </div>
 
+                <div className="ocean-section">
+                  <h4 className="section-label"><FaStickyNote size={13} color="#0ea5e9"/> Reservation notes</h4>
+                  <div className="field">
+                    <label>Notes (optional)</label>
+                    <textarea
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="Internal notes: special requests, follow-ups, reminders…"
+                      maxLength={4000}
+                    />
+                  </div>
+                </div>
+
                 {pricing.ok && pricing.rateSnapshots?.length > 0 && (
                   <div className="ocean-section">
                     <h4 className="section-label"><FaConciergeBell size={13} color="#0ea5e9"/> Rate & package snapshot</h4>
@@ -656,7 +788,59 @@ export default function ReservationModal({
                 <div className="ocean-section" style={{marginTop:'20px'}}>
                   <h4 className="section-label"><FaCreditCard size={13} color="#0ea5e9"/> Settlement</h4>
                   <div className="field"><label>Channel <span style={{color: '#ef4444'}}>*</span></label><select value={channel} onChange={e => setChannel(e.target.value)} required>{BOOKING_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-                  <div className="field"><label>Payment method <span style={{color: '#ef4444'}}>*</span></label><select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} required>{PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+                  <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'15px'}}>
+                    <div className="field"><label>Payment method <span style={{color: '#ef4444'}}>*</span></label><select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} required>{PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+                    <div className="field"><label>Payment status</label><select value={paymentStatus} onChange={e => setPaymentStatus(e.target.value)}>{PAYMENT_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px" }}>
+                    <div className="field">
+                      <label>Amount paid</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={amountPaidStr}
+                        onChange={(e) => setAmountPaidStr(e.target.value)}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Remaining payment</label>
+                      <input
+                        type="text"
+                        readOnly
+                        value={pricing.ok ? moneyFieldToString(remainingPaymentNum) : "—"}
+                        title="Calculated as grand total minus amount paid"
+                        style={{
+                          background: "#f1f5f9",
+                          color: "#334155",
+                          cursor: "default",
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {pricing.ok ? (
+                    <div
+                      style={{
+                        marginTop: 2,
+                        marginBottom: 4,
+                        fontSize: "0.75rem",
+                        lineHeight: 1.45,
+                        color: paidExceedsTotal ? "#b45309" : "#64748b",
+                      }}
+                    >
+                      Folio grand total <strong>{money(pricing.total)}</strong>
+                      {" · "}
+                      Amount paid <strong>{money(amountPaidNum)}</strong>
+                      {" · "}
+                      Remaining <strong>{money(remainingPaymentNum)}</strong>
+                      {paidExceedsTotal ? (
+                        <span style={{ display: "block", marginTop: 4 }}>
+                          Amount paid is higher than the grand total — excess is not tracked as remaining.
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="field"><label>Status</label><select value={status} onChange={e => setStatus(e.target.value)} style={{background:'#f0fdf4', color:'#166534', fontWeight: 800}}>{STATUS_LIST.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                 </div>
 
