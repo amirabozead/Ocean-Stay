@@ -879,6 +879,25 @@ function loadSupabaseCfg() {
   }
 }
 
+/** PostgREST/Postgres rejects writes when RLS is on but no policy allows the role — common if only init migrations ran. */
+function warnIfOceanExtraRevenuesBlocked(err, contextLabel) {
+  if (!err) return;
+  const m = String(err.message || "").toLowerCase();
+  const code = String(err.code || "");
+  if (
+    code === "42501" ||
+    m.includes("row-level security") ||
+    m.includes("rls policy") ||
+    m.includes("permission denied")
+  ) {
+    console.warn(
+      `[Ocean Stay] ocean_extra_revenues sync blocked (${contextLabel}):`,
+      err.message,
+      "| Apply policies: Supabase Dashboard → SQL → run supabase/migrations/20260503163000_ocean_extra_revenues_rls_policies.sql",
+    );
+  }
+}
+
 let _sb = null;
 let _sbSig = "";
 
@@ -1151,12 +1170,14 @@ export default function App() {
       if (rows.length) {
         const { error: upErr } = await sb.from("ocean_extra_revenues").upsert(rows, { onConflict: "id" });
         if (upErr) {
+          warnIfOceanExtraRevenuesBlocked(upErr, "save handler");
           console.error("Extra revenue sync (upsert) failed:", upErr.message, upErr.code, upErr.details);
           return;
         }
       }
       const { data: existing, error: selErr } = await sb.from("ocean_extra_revenues").select("id");
       if (selErr) {
+        warnIfOceanExtraRevenuesBlocked(selErr, "after save ids");
         console.error("Extra revenue sync (select) failed:", selErr.message);
         return;
       }
@@ -2155,12 +2176,14 @@ useEffect(() => {
         if (rows.length) {
           const { error: upErr } = await sb.from("ocean_extra_revenues").upsert(rows, { onConflict: "id" });
           if (upErr) {
+            warnIfOceanExtraRevenuesBlocked(upErr, "effect");
             console.error("ocean_extra_revenues upsert error:", upErr.message, upErr.details);
             return;
           }
         }
         const { data: existing, error: selErr } = await sb.from("ocean_extra_revenues").select("id");
         if (selErr) {
+          warnIfOceanExtraRevenuesBlocked(selErr, "effect ids");
           console.error("ocean_extra_revenues select error:", selErr.message);
           return;
         }
