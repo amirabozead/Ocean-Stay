@@ -1125,9 +1125,9 @@ export default function App() {
   );
 
   const syncExtraRevenuesToSupabase = async (list) => {
-    const cfg = lsGet(SB_LS_CFG, null);
-    const anon = (cfg?.anon || cfg?.anonKey || "").trim();
-    if (!cfg?.enabled || !cfg?.url || !anon) return;
+    const cfg = loadSupabaseCfg();
+    const sb = getSupabaseClient();
+    if (!cfg.enabled || !sb || cfg.push === false) return;
     const arr = Array.isArray(list) ? list : [];
     const localIds = new Set(arr.filter((r) => r && r.id).map((r) => String(r.id)));
     const todayYMD = new Date().toISOString().slice(0, 10);
@@ -1148,7 +1148,6 @@ export default function App() {
         };
       });
     try {
-      const sb = createClient(cfg.url, anon);
       if (rows.length) {
         const { error: upErr } = await sb.from("ocean_extra_revenues").upsert(rows, { onConflict: "id" });
         if (upErr) {
@@ -1287,13 +1286,12 @@ useEffect(() => {
   storeSave(LS_STORE_ITEMS, storeItems);
 
   if (!cloudBootstrapped) return;
-  const cfg = lsGet(SB_LS_CFG, null);
-  const anon = cfg?.anon || cfg?.anonKey;
-  if (!cfg?.enabled || !cfg?.url || !anon || cfg.push === false) return;
+  const cfg = loadSupabaseCfg();
+  const sb = getSupabaseClient();
+  if (!cfg.enabled || !sb || cfg.push === false) return;
 
   (async () => {
     try {
-      const sb = createClient(cfg.url, anon);
       const localList = storeItems || [];
       const localIds = new Set(localList.map((it) => it.id).filter(Boolean));
       await sb.from("ocean_store_items").upsert(
@@ -1315,13 +1313,12 @@ useEffect(() => {
   storeSave(LS_STORE_MOVES, storeMoves);
 
   if (!cloudBootstrapped) return;
-  const cfg = lsGet(SB_LS_CFG, null);
-  const anon = cfg?.anon || cfg?.anonKey;
-  if (!cfg?.enabled || !cfg?.url || !anon || cfg.push === false) return;
+  const cfg = loadSupabaseCfg();
+  const sb = getSupabaseClient();
+  if (!cfg.enabled || !sb || cfg.push === false) return;
 
   (async () => {
     try {
-      const sb = createClient(cfg.url, anon);
       const localList = storeMoves || [];
       const localIds = new Set(localList.map((m) => m.id).filter(Boolean));
       await sb.from("ocean_store_moves").upsert(
@@ -1343,13 +1340,12 @@ useEffect(() => {
   storeSave(LS_STORE_SUPPLIERS, storeSuppliers);
 
   if (!cloudBootstrapped) return;
-  const cfg = lsGet(SB_LS_CFG, null);
-  const anon = cfg?.anon || cfg?.anonKey;
-  if (!cfg?.enabled || !cfg?.url || !anon || cfg.push === false) return;
+  const cfg = loadSupabaseCfg();
+  const sb = getSupabaseClient();
+  if (!cfg.enabled || !sb || cfg.push === false) return;
 
   (async () => {
     try {
-      const sb = createClient(cfg.url, anon);
       const localList = storeSuppliers || [];
       const localIds = new Set(localList.map((s) => s.id).filter(Boolean));
       await sb.from("ocean_store_suppliers").upsert(
@@ -2130,9 +2126,9 @@ useEffect(() => {
   // Extra revenues: push to Supabase (use same config as bootstrap so sync always works)
   useEffect(() => {
     if (!cloudBootstrapped) return;
-    const cfg = lsGet(SB_LS_CFG, null);
-    const anon = (cfg?.anon || cfg?.anonKey || "").trim();
-    if (!cfg?.enabled || !cfg?.url || !anon) return;
+    const cfg = loadSupabaseCfg();
+    const sb = getSupabaseClient();
+    if (!cfg.enabled || !sb || cfg.push === false) return;
 
     const localList = Array.isArray(extraRevenues) ? extraRevenues : [];
     const localIds = new Set(localList.filter((r) => r && r.id).map((r) => String(r.id)));
@@ -2156,7 +2152,6 @@ useEffect(() => {
 
     (async () => {
       try {
-        const sb = createClient(cfg.url, anon);
         if (rows.length) {
           const { error: upErr } = await sb.from("ocean_extra_revenues").upsert(rows, { onConflict: "id" });
           if (upErr) {
